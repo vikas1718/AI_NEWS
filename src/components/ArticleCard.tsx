@@ -14,7 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import { Crop, ImageIcon, LinkIcon, Loader2, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
+import { Crop, ImageIcon, Languages, LinkIcon, Loader2, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -28,6 +28,20 @@ const catColor: Record<string, string> = {
   Business: "bg-amber-100 text-amber-950 dark:bg-amber-950 dark:text-amber-200",
   Other: "bg-muted text-muted-foreground",
 };
+
+function countKannadaChars(text: string) {
+  return [...text].filter((char) => char >= "\u0c80" && char <= "\u0cff").length;
+}
+
+function countLatinChars(text: string) {
+  return [...text].filter((char) => /[a-z]/i.test(char)).length;
+}
+
+function needsKannadaConversion(text: string) {
+  const latinCount = countLatinChars(text);
+  const kannadaCount = countKannadaChars(text);
+  return latinCount >= 20 && latinCount > kannadaCount * 2;
+}
 
 export function ArticleCard({ article, editable = true }: { article: Article; editable?: boolean }) {
   const qc = useQueryClient();
@@ -58,6 +72,15 @@ export function ArticleCard({ article, editable = true }: { article: Article; ed
     image: hasImage,
     ready_for_layout: true,
   });
+  const articleDisplayText = [
+    article.headline,
+    article.summary,
+    article.corrected_text,
+    article.ocr_text,
+    article.raw_text,
+  ].filter(Boolean).join("\n");
+  const sourceText = article.raw_text ?? article.ocr_text ?? article.corrected_text ?? article.summary ?? article.headline ?? "";
+  const showConvertToKannada = editable && needsKannadaConversion(articleDisplayText);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -88,6 +111,38 @@ export function ArticleCard({ article, editable = true }: { article: Article; ed
       qc.invalidateQueries({ queryKey: ["articles"] });
       toast.success("Removed");
     },
+  });
+
+  const convertToKannada = useMutation({
+    mutationFn: async () => {
+      const source = sourceText.trim();
+      if (source.length < 20) throw new Error("Article text is too short to convert");
+
+      const ai = await aiFn.process(source);
+      const { error } = await supabase.from("articles").update({
+        corrected_text: ai.corrected_text,
+        headline: ai.headline,
+        summary: ai.summary,
+        category: ai.category,
+        priority_score: ai.priority_score,
+        workflow_status: {
+          ...(article.workflow_status ?? {}),
+          ai_processing: true,
+          headline: true,
+          category: true,
+          priority: true,
+        },
+      }).eq("id", article.id);
+      if (error) throw error;
+      return ai;
+    },
+    onSuccess: (ai) => {
+      setHeadline(ai.headline);
+      setBody(ai.corrected_text);
+      qc.invalidateQueries({ queryKey: ["articles", article.newspaper_id] });
+      toast.success("Converted to Kannada");
+    },
+    onError: (e: any) => toast.error(e.message),
   });
 
   async function saveImageUrl(nextImageUrl: string, source: string) {
@@ -318,6 +373,12 @@ export function ArticleCard({ article, editable = true }: { article: Article; ed
       {editable && !editing && (
         <div className="flex flex-wrap gap-2 border-t px-4 py-2">
           <Button size="sm" variant="outline" onClick={() => setEditing(true)}>Edit</Button>
+          {showConvertToKannada && (
+            <Button size="sm" variant="outline" onClick={() => convertToKannada.mutate()} disabled={convertToKannada.isPending}>
+              {convertToKannada.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Languages className="mr-1 h-3.5 w-3.5" />}
+              Convert to Kannada
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={genImage} disabled={genLoading}>
             {genLoading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : article.image_url ? <RefreshCw className="mr-1 h-3.5 w-3.5" /> : <Sparkles className="mr-1 h-3.5 w-3.5" />}
             {article.image_url ? "Regenerate image" : "Generate AI image"}

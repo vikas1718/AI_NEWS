@@ -6,9 +6,9 @@ export const Route = createFileRoute("/_authenticated/pipeline")({
 });
 
 const MODULES = [
-  { icon: ScanLine, name: "OCR AI", stage: "Extract Kannada text from image/PDF/scan uploads.", impl: "OpenAI vision OCR" },
-  { icon: Languages, name: "Kannada NLP AI", stage: "Tokenise and normalise Kannada Unicode.", impl: "Bundled into correction step" },
-  { icon: SpellCheck, name: "Grammar AI", stage: "Fix grammar and spelling in Kannada article.", impl: "Real (Gemini 3 Flash)" },
+  { icon: ScanLine, name: "OCR AI", stage: "Extract source text from image/PDF/scan uploads.", impl: "OpenAI vision OCR" },
+  { icon: Languages, name: "Kannada Translation AI", stage: "Convert English or mixed input to Kannada by default.", impl: "Bundled into correction step" },
+  { icon: SpellCheck, name: "Grammar AI", stage: "Fix grammar and spelling in the Kannada article.", impl: "Real (Gemini 3 Flash)" },
   { icon: Type, name: "Headline AI", stage: "Generate a punchy Kannada headline.", impl: "Real (Gemini 3 Flash)" },
   { icon: FileText, name: "Summarisation AI", stage: "1–2 sentence Kannada summary.", impl: "Real (Gemini 3 Flash)" },
   { icon: Tag, name: "Category AI", stage: "Classify: Politics, Sports, Crime, …", impl: "Real (Gemini 3 Flash)" },

@@ -21,7 +21,7 @@ type UploadedFileInfo = {
   type: string;
 };
 
-const KANNADA_PLACEHOLDER = "ಇಲ್ಲಿ ಕನ್ನಡ ಸುದ್ದಿ ಪಠ್ಯವನ್ನು ಅಂಟಿಸಿ / ಟೈಪ್ ಮಾಡಿ…";
+const ARTICLE_PLACEHOLDER = "Paste English or Kannada article text. Run AI pipeline will convert it to Kannada by default.";
 
 export function AddArticleFlow({ newspaperId, onCreated }: Props) {
   const qc = useQueryClient();
@@ -56,37 +56,30 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
         });
         text = ocr.ocr_text;
         workflow.ocr = true;
-        toast.info("OCR complete");
+        toast.info("OCR complete. Converting to Kannada...");
       } else {
         workflow.ocr = true;
       }
 
-      // Insert draft article
+      // Kannada conversion + article processing
+      workflow.ai_processing = true;
+      const ai = await aiFn.process(text);
+      workflow.headline = true; workflow.category = true; workflow.priority = true; workflow.image = false;
+
+      // Insert article only after the Kannada conversion succeeds.
       const { data: draft, error: e1 } = await supabase.from("articles").insert({
         newspaper_id: newspaperId,
         raw_input_type: inputType,
         raw_text: tab === "text" ? text : null,
         ocr_text: tab !== "text" ? text : null,
-        workflow_status: workflow,
-      }).select().single();
-      if (e1) throw e1;
-
-      // Real AI processing
-      workflow.ai_processing = true;
-      const ai = await aiFn.process(text);
-      workflow.headline = true; workflow.category = true; workflow.priority = true;
-
-      // Image
-      workflow.image = false;
-      const { error: e2 } = await supabase.from("articles").update({
         corrected_text: ai.corrected_text,
         headline: ai.headline,
         summary: ai.summary,
         category: ai.category,
         priority_score: ai.priority_score,
         workflow_status: { ...workflow, ready_for_layout: false },
-      }).eq("id", draft.id);
-      if (e2) throw e2;
+      }).select().single();
+      if (e1) throw e1;
 
       return draft;
     },
@@ -94,7 +87,7 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
       setRawText("");
       setGenerating(false);
       qc.invalidateQueries({ queryKey: ["articles", newspaperId] });
-      toast.success("Article added — image step pending");
+      toast.success("Article added in Kannada. Image step pending");
       onCreated?.();
     },
     onError: (e: any) => { setGenerating(false); toast.error(e.message); },
@@ -126,10 +119,10 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
           <TabsTrigger value="scan"><ScanLine className="mr-1 h-3.5 w-3.5" />Scan</TabsTrigger>
         </TabsList>
         <TabsContent value="text" className="mt-4 space-y-3">
-          <Label>Kannada article text</Label>
-          <Textarea rows={7} value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder={KANNADA_PLACEHOLDER} className="font-kannada text-base" />
-          <Button onClick={() => runPipeline.mutate()} disabled={busy || rawText.trim().length < 20} className="w-full">
-            {busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Running AI pipeline…</> : <><Wand2 className="mr-2 h-4 w-4" /> Run AI pipeline</>}
+          <Label>Article text</Label>
+          <Textarea rows={7} value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder={ARTICLE_PLACEHOLDER} className="font-kannada text-base" />
+          <Button onClick={() => runPipeline.mutate(undefined)} disabled={busy || rawText.trim().length < 20} className="w-full">
+            {busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Converting to Kannada...</> : <><Wand2 className="mr-2 h-4 w-4" /> Run AI pipeline</>}
           </Button>
         </TabsContent>
         {(["image", "pdf", "scan"] as const).map((t) => (
@@ -137,10 +130,10 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
             <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 text-center hover:bg-accent/30">
               <Upload className="h-6 w-6 text-muted-foreground" />
               <div className="text-sm font-medium">Click to upload {t}</div>
-              <div className="text-xs text-muted-foreground">OpenAI OCR will run automatically</div>
+              <div className="text-xs text-muted-foreground">OCR runs first, then Kannada conversion</div>
               <input type="file" className="hidden" accept={t === "image" ? "image/*" : t === "pdf" ? "application/pdf" : "image/*,application/pdf"} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
             </label>
-            {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Uploaded → OCR → AI processing…</div>}
+            {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Uploaded, OCR, Kannada conversion...</div>}
           </TabsContent>
         ))}
       </Tabs>

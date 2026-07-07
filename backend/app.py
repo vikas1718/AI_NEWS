@@ -34,14 +34,29 @@ MOCK_KANNADA = [
     "\u0cb9\u0cbe\u0cb8\u0ca8: \u0c9c\u0cbf\u0cb2\u0ccd\u0cb2\u0cbe \u0c95\u0ccd\u0cb0\u0cc0\u0ca1\u0cbe \u0cb8\u0cae\u0cbe\u0cb5\u0cc7\u0cb6\u0ca6\u0cb2\u0ccd\u0cb2\u0cbf \u0cb8\u0ccd\u0ca5\u0cb3\u0cc0\u0caf \u0ca4\u0c82\u0ca1 \u0c9a\u0cbf\u0ca8\u0ccd\u0ca8\u0ca6 \u0caa\u0ca6\u0c95 \u0c97\u0cc6\u0ca6\u0ccd\u0ca6\u0cbf\u0ca6\u0cc6.",
 ]
 
-SYSTEM_PROMPT = """You are an expert Kannada newspaper editor. You receive raw Kannada article text
-(possibly noisy from OCR). Return a strict JSON object with:
-- corrected_text (string): grammar/spell corrected Kannada version of the article.
+SYSTEM_PROMPT = """You are an expert Kannada newspaper editor and translator.
+The input may be English, Kannada, mixed-language, or noisy OCR from an image/PDF/scan.
+
+Default output language: Kannada (kn-IN).
+Tasks:
+1. If the input is English or any non-Kannada language, translate the full article into natural newspaper Kannada.
+2. If the input is already Kannada, correct spelling, grammar, punctuation, OCR mistakes, and preserve meaning.
+3. Preserve factual details, names, places, numbers, dates, quotes, and paragraph structure when possible.
+4. Do not leave English sentences in corrected_text unless they are proper nouns, official titles, abbreviations, URLs, or quoted source text that should remain as-is.
+
+Return a strict JSON object with:
+- corrected_text (string): the final Kannada article text after translation/correction.
 - headline (string): a punchy Kannada headline, <= 12 words.
 - summary (string): 1-2 sentence Kannada summary.
 - category (string): exactly one of: Politics, Sports, Crime, Agriculture, Education, Cinema, Business, Other.
 - priority_score (integer 0-100): 95 for breaking/national, 80 state-level, 50 district-level, 30 local/soft.
 Respond ONLY with JSON, no prose."""
+
+TRANSLATION_RETRY_PROMPT = SYSTEM_PROMPT + """
+
+Critical validation rule:
+The previous output was rejected because the article body was not in Kannada script.
+Return corrected_text, headline, and summary in Kannada script now. Do not copy the English input."""
 
 IMAGE_BRIEF_PROMPT = """You are a photo editor for a Kannada newspaper in Karnataka, India.
 Convert the article details into one accurate English image-generation prompt.
@@ -135,7 +150,25 @@ def primary_text_model() -> str:
     return env_value("OPENAI_MODEL_PRIMARY") or env_value("OPENAI_TEXT_MODEL") or "gpt-4o-mini"
 
 
-def call_openai_chat(text: str) -> dict[str, Any] | None:
+def count_kannada_chars(text: str) -> int:
+    return sum(1 for char in text if "\u0c80" <= char <= "\u0cff")
+
+
+def count_latin_chars(text: str) -> int:
+    return sum(1 for char in text if ("a" <= char.lower() <= "z"))
+
+
+def needs_kannada_translation(text: str) -> bool:
+    latin_count = count_latin_chars(text)
+    kannada_count = count_kannada_chars(text)
+    return latin_count >= 20 and latin_count > kannada_count * 2
+
+
+def has_kannada_text(text: str) -> bool:
+    return count_kannada_chars(text) >= 5
+
+
+def call_openai_chat(text: str, system_prompt: str = SYSTEM_PROMPT) -> dict[str, Any] | None:
     azure_key = get_azure_openai_key()
     if azure_key:
         deployment = env_value("AZURE_OPENAI_TEXT_DEPLOYMENT") or env_value("OPENAI_MODEL_PRIMARY")
@@ -143,7 +176,7 @@ def call_openai_chat(text: str) -> dict[str, Any] | None:
             raise ValueError("AZURE_OPENAI_TEXT_DEPLOYMENT required for Azure OpenAI chat")
         payload = {
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
             "response_format": {"type": "json_object"},
@@ -167,7 +200,7 @@ def call_openai_chat(text: str) -> dict[str, Any] | None:
     payload = {
         "model": primary_text_model(),
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},
         ],
         "response_format": {"type": "json_object"},
@@ -479,11 +512,12 @@ def normalize_article_result(result: dict[str, Any], text: str) -> dict[str, Any
     if category not in VALID_CATEGORIES:
         category = "Other"
 
-    headline = result.get("headline") or text.strip().splitlines()[0][:80] or "Untitled article"
-    summary = result.get("summary") or text.strip()[:220]
+    headline = str(result.get("headline") or text.strip().splitlines()[0][:80] or "Untitled article").strip()
+    summary = str(result.get("summary") or text.strip()[:220]).strip()
+    corrected_text = str(result.get("corrected_text") or text).strip()
 
     return {
-        "corrected_text": result.get("corrected_text") or text,
+        "corrected_text": corrected_text,
         "headline": headline,
         "summary": summary,
         "category": category,
@@ -542,6 +576,8 @@ def handle_process_article(payload: dict[str, Any]) -> dict[str, Any]:
     if not text:
         raise ValueError("text required")
 
+    requires_translation = needs_kannada_translation(text)
+
     try:
         result = call_openai_chat(text)
     except urllib.error.HTTPError as exc:
@@ -550,8 +586,13 @@ def handle_process_article(payload: dict[str, Any]) -> dict[str, Any]:
         if exc.code == 402:
             raise RuntimeError("credits_exhausted") from exc
         raise RuntimeError(f"ai_failed: {exc.read().decode('utf-8', errors='replace')}") from exc
-    except (OSError, urllib.error.URLError):
+    except (OSError, urllib.error.URLError) as exc:
+        if requires_translation:
+            raise RuntimeError("ai_failed: Kannada conversion needs OpenAI/network access. Please check the backend connection and try again.") from exc
         result = None
+
+    if result is None and requires_translation:
+        raise RuntimeError("ai_failed: Kannada conversion needs OPENAI_API_KEY. Please configure the backend and try again.")
 
     if result is None:
         result = {
@@ -561,7 +602,26 @@ def handle_process_article(payload: dict[str, Any]) -> dict[str, Any]:
             "category": "Other",
             "priority_score": 50,
         }
-    return normalize_article_result(result, text)
+
+    normalized = normalize_article_result(result, text)
+    if requires_translation and not has_kannada_text(normalized["corrected_text"]):
+        try:
+            retry_result = call_openai_chat(text, TRANSLATION_RETRY_PROMPT)
+            if retry_result is not None:
+                normalized = normalize_article_result(retry_result, text)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                raise RuntimeError("rate_limited") from exc
+            if exc.code == 402:
+                raise RuntimeError("credits_exhausted") from exc
+            raise RuntimeError(f"ai_failed: {exc.read().decode('utf-8', errors='replace')}") from exc
+        except (OSError, urllib.error.URLError) as exc:
+            raise RuntimeError("ai_failed: Kannada conversion needs OpenAI/network access. Please check the backend connection and try again.") from exc
+
+    if requires_translation and not has_kannada_text(normalized["corrected_text"]):
+        raise RuntimeError("translation_failed: AI returned non-Kannada text. Please run the pipeline again.")
+
+    return normalized
 
 
 def handle_generate_image(payload: dict[str, Any]) -> dict[str, Any]:
