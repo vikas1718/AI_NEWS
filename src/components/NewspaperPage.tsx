@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { Article, Newspaper } from "@/lib/api";
 
 interface Props {
@@ -130,9 +131,43 @@ function PrajavaniMasthead() {
 }
 
 /** Renders one newspaper page in real column layout with headline hierarchy. */
-export function NewspaperPage({ newspaper, articles, pageNumber, totalPages = newspaper.number_of_pages }: Props) {
-  const paginatedArticles = paginatePrintArticles(articles);
-  const pageArticles = (paginatedArticles.get(pageNumber) ?? [])
+
+const ARTICLE_BACKGROUND_COLORS = new Set([
+  "#fff4bf",
+  "#dbeafe",
+  "#dcfce7",
+  "#ffedd5",
+  "#ffe4e6",
+  "#e5e7eb",
+]);
+
+const BACKGROUND_COLOR_FALLBACK_KEY = "article_background_color";
+
+function normalizeArticleBackgroundColor(value: unknown) {
+  if (typeof value === "string") {
+    return ARTICLE_BACKGROUND_COLORS.has(value) ? value : "";
+  }
+  if (value && typeof value === "object" && "value" in value) {
+    return normalizeArticleBackgroundColor((value as { value?: unknown }).value);
+  }
+  return "";
+}
+
+function articleBackgroundStyle(article: Article): CSSProperties | undefined {
+  const workflowStatus = article.workflow_status as Record<string, unknown> | null | undefined;
+  const backgroundColor =
+    normalizeArticleBackgroundColor(article.background_color) ||
+    normalizeArticleBackgroundColor(workflowStatus?.[BACKGROUND_COLOR_FALLBACK_KEY]);
+  if (!backgroundColor) return undefined;
+  return {
+    backgroundColor,
+    padding: "10px",
+    borderRadius: 2,
+  };
+}
+export function NewspaperPage({ newspaper, articles, pageNumber }: Props) {
+  const pageArticles = articles
+    .filter((a) => (a.page_number ?? 0) === pageNumber)
     .sort((a, b) => (a.position === "top" ? -1 : b.position === "top" ? 1 : 0));
 
   const lead = pageArticles.find((a) => a.headline_size === "big") ?? pageArticles[0];
@@ -141,24 +176,21 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages = ne
 
   return (
     <div
-      className="newsprint mx-auto flex flex-col overflow-hidden bg-white shadow-xl"
-      style={{
-        width: "100%",
-        maxWidth: 780,
-        height: "min(calc(100vw * 578 / 380), calc(780px * 578 / 380))",
-        aspectRatio: "380 / 578",
-        boxSizing: "border-box",
-        padding: "14px 20px",
-      }}
+      className="newsprint mx-auto shadow-xl"
+      style={{ width: "100%", maxWidth: 780, aspectRatio: "0.72", padding: "28px 32px" }}
     >
       {/* Masthead only on page 1 */}
       {pageNumber === 1 && (
-        <div className="mb-1 shrink-0 border-b-4 border-double border-newsprint-ink pb-1 text-center">
-          <PrajavaniMasthead />
-          <div className="mt-0.5 flex justify-between text-[9px] uppercase tracking-widest">
+        <div className="mb-3 border-b-4 border-double border-newsprint-ink pb-3 text-center">
+          <div className="font-serif text-5xl font-black tracking-tight">
+            {newspaper.edition_name}
+          </div>
+          <div className="mt-1 flex justify-between text-[10px] uppercase tracking-widest">
             <span>{newspaper.language}</span>
             <span>{new Date(newspaper.edition_date).toDateString()}</span>
-            <span>Page {pageNumber} of {totalPages}</span>
+            <span>
+              Page {pageNumber} of {newspaper.number_of_pages}
+            </span>
           </div>
         </div>
       )}
@@ -176,47 +208,72 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages = ne
       )}
 
       {lead && (
-        <div className="mb-1 shrink-0 overflow-hidden border-b border-newsprint-rule pb-1">
-          {!lead.text_only && <div className="text-[10px] font-bold uppercase tracking-widest text-primary">{lead.category}</div>}
-          {!lead.text_only && (
-            <h1 className="mt-0.5 line-clamp-2 font-kannada-serif text-[28px] font-black leading-tight">{lead.headline}</h1>
+        <div
+          className="mb-4 border-b border-newsprint-rule pb-3"
+          style={articleBackgroundStyle(lead)}
+        >
+          <div className="text-[10px] font-bold uppercase tracking-widest text-primary">
+            {lead.category}
+          </div>
+          <h1 className="mt-1 font-kannada-serif text-4xl font-black leading-tight">
+            {lead.headline}
+          </h1>
+          {lead.summary && (
+            <p className="mt-2 font-kannada text-sm italic opacity-80">{lead.summary}</p>
           )}
-          {lead.text_only && <div className="text-[9px] italic opacity-70">continued</div>}
-          {!lead.text_only && lead.summary && <p className="mt-0.5 line-clamp-2 font-kannada text-[11px] italic opacity-80">{lead.summary}</p>}
-          <div className="mt-0.5">
+          <div className="mt-3 grid grid-cols-3 gap-3">
             {lead.image_url && (
-              <div>
-                <img src={lead.image_url} alt="" className="w-full object-cover" style={{ maxHeight: 140 }} />
+              <div className="col-span-3">
+                <img
+                  src={lead.image_url}
+                  alt=""
+                  className="w-full object-cover"
+                  style={{ maxHeight: 240 }}
+                />
                 <div className="text-[9px] italic opacity-70">— Photo caption —</div>
               </div>
             )}
-            <div className={`mt-0.5 max-h-72 overflow-hidden font-kannada ${bodyTextClass(leadText, true)}`}>
-              {leadText}
+            <div
+              className="col-span-3 font-kannada text-[13px] leading-relaxed"
+              style={{ columnCount: 3, columnGap: 12 }}
+            >
+              {lead.corrected_text ?? lead.ocr_text ?? lead.raw_text}
             </div>
           </div>
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 auto-rows-fr grid-cols-2 gap-1.5 overflow-hidden">
-        {rest.map((a) => {
-          const body = a.print_text ?? a.corrected_text ?? a.summary ?? a.ocr_text ?? a.raw_text ?? "";
-
-          return (
-            <div key={a.id} className="flex min-h-0 flex-col overflow-hidden border-t border-newsprint-rule pt-0.5">
-              {!a.text_only && <div className="text-[9px] font-bold uppercase tracking-widest text-primary">{a.category}</div>}
-              {!a.text_only && (
-                <h3 className={`line-clamp-2 font-kannada-serif font-bold leading-tight ${a.headline_size === "medium" ? "text-base" : "text-sm"}`}>
-                  {a.headline}
-                </h3>
-              )}
-              {a.text_only && <div className="text-[9px] italic opacity-70">continued</div>}
-              {a.image_url && <img src={a.image_url} alt="" className="mt-0.5 w-full shrink-0 object-cover" style={{ maxHeight: 58 }} />}
-              <p className={`mt-0.5 min-h-0 flex-1 overflow-hidden font-kannada ${bodyTextClass(body)}`}>
-                {body}
-              </p>
+      <div className="grid grid-cols-2 gap-4">
+        {rest.map((a) => (
+          <div
+            key={a.id}
+            className="border-t border-newsprint-rule pt-2"
+            style={articleBackgroundStyle(a)}
+          >
+            <div className="text-[9px] font-bold uppercase tracking-widest text-primary">
+              {a.category}
             </div>
-          );
-        })}
+            <h3
+              className={`font-kannada-serif font-bold leading-tight ${a.headline_size === "medium" ? "text-lg" : "text-base"}`}
+            >
+              {a.headline}
+            </h3>
+            {a.image_url && (
+              <img
+                src={a.image_url}
+                alt=""
+                className="mt-1.5 w-full object-cover"
+                style={{ maxHeight: 110 }}
+              />
+            )}
+            <p
+              className="mt-1 font-kannada text-[12px] leading-snug"
+              style={{ columnCount: a.column_count && a.column_count > 1 ? 2 : 1, columnGap: 8 }}
+            >
+              {a.corrected_text ?? a.summary ?? a.ocr_text ?? a.raw_text}
+            </p>
+          </div>
+        ))}
       </div>
 
       <div className="mt-1 flex shrink-0 justify-between border-t border-newsprint-rule pt-0.5 text-[9px] uppercase tracking-widest">
