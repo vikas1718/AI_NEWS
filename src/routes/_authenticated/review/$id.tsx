@@ -4,6 +4,11 @@ import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { aiFn, type Article, type Newspaper } from "@/lib/api";
 import { getPrintPageCount, NewspaperPage } from "@/components/NewspaperPage";
+import {
+  hasSavedEditorLayout,
+  savedLayoutPageNumbers,
+  SavedLayoutPreviewPage,
+} from "@/components/SavedLayoutPreviewPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -39,6 +44,20 @@ function ReviewEdition() {
       const { data, error } = await supabase.from("articles").select("*").eq("newspaper_id", id);
       if (error) throw error;
       return (data ?? []) as unknown as Article[];
+    },
+  });
+  const { data: latestLayout } = useQuery({
+    queryKey: ["saved-layout", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("layouts")
+        .select("layout_json")
+        .eq("newspaper_id", id)
+        .order("generated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.layout_json ?? null;
     },
   });
 
@@ -89,8 +108,12 @@ function ReviewEdition() {
   });
 
   if (!newspaper) return <div>Loading…</div>;
-  const totalPages = getPrintPageCount(articles, newspaper.number_of_pages);
-  const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+  const savedPreviewPages = savedLayoutPageNumbers(latestLayout);
+  const hasSavedPreview = hasSavedEditorLayout(latestLayout);
+  const totalPages = hasSavedPreview
+    ? savedPreviewPages.length
+    : getPrintPageCount(articles, newspaper.number_of_pages);
+  const pages = hasSavedPreview ? savedPreviewPages : Array.from({ length: totalPages }, (_, i) => i + 1);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -109,7 +132,17 @@ function ReviewEdition() {
           {pages.map((p) => (
             <div key={p}>
               <div className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">Page {p}</div>
-              <NewspaperPage newspaper={newspaper} articles={articles} pageNumber={p} totalPages={totalPages} />
+              {hasSavedPreview ? (
+                <SavedLayoutPreviewPage
+                  newspaper={newspaper}
+                  articles={articles}
+                  layoutJson={latestLayout}
+                  pageNumber={p}
+                  totalPages={totalPages}
+                />
+              ) : (
+                <NewspaperPage newspaper={newspaper} articles={articles} pageNumber={p} totalPages={totalPages} />
+              )}
             </div>
           ))}
         </div>

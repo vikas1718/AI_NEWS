@@ -1,13 +1,18 @@
 import { createFileRoute, Link, useRouteContext } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { format } from "date-fns";
-import { ArrowLeft, Layout as LayoutIcon, Loader2, Send } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Layout as LayoutIcon, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 import { AddArticleFlow } from "@/components/AddArticleFlow";
 import { ArticleCard } from "@/components/ArticleCard";
 import { NewspaperLayoutEditor } from "@/components/NewspaperLayoutEditor";
 import { getPrintPageCount, NewspaperPage } from "@/components/NewspaperPage";
+import {
+  hasSavedEditorLayout,
+  savedLayoutPageNumbers,
+  SavedLayoutPreviewPage,
+} from "@/components/SavedLayoutPreviewPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,6 +22,268 @@ import { aiFn, type Article, type Newspaper } from "@/lib/api";
 export const Route = createFileRoute("/_authenticated/editions/$id")({
   component: EditionWorkspace,
 });
+
+type SavedPlacement = {
+  articleId: string;
+  pageNumber: number;
+  slotKind: string;
+  slotWidth: number;
+};
+
+type PageTurnPreviewProps = {
+  newspaper: Newspaper;
+  articles: Article[];
+  latestLayout: unknown;
+  pages: number[];
+  totalPages: number;
+  hasSavedPreview: boolean;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function savedEditorPlacements(layoutJson: unknown): SavedPlacement[] {
+  if (!isRecord(layoutJson) || !isRecord(layoutJson.pages)) return [];
+
+  const placements: SavedPlacement[] = [];
+  for (const [pageNumber, pageState] of Object.entries(layoutJson.pages)) {
+    if (!isRecord(pageState) || !Array.isArray(pageState.slots) || !isRecord(pageState.assignments)) continue;
+
+    for (const slot of pageState.slots) {
+      if (!isRecord(slot) || typeof slot.id !== "string") continue;
+      const assignment = pageState.assignments[slot.id];
+      if (!isRecord(assignment) || typeof assignment.articleId !== "string") continue;
+
+      placements.push({
+        articleId: assignment.articleId,
+        pageNumber: Number(pageNumber),
+        slotKind: typeof slot.kind === "string" ? slot.kind : "story",
+        slotWidth: typeof slot.w === "number" ? slot.w : 4,
+      });
+    }
+  }
+
+  return placements;
+}
+
+function PageTurnPreview({
+  newspaper,
+  articles,
+  latestLayout,
+  pages,
+  totalPages,
+  hasSavedPreview,
+}: PageTurnPreviewProps) {
+  const firstPage = pages[0] ?? 1;
+  const pagesKey = pages.join(",");
+  const [visiblePage, setVisiblePage] = useState(firstPage);
+  const [turnTargetPage, setTurnTargetPage] = useState<number | null>(null);
+  const [turnDirection, setTurnDirection] = useState<1 | -1>(1);
+  const isTurning = turnTargetPage !== null;
+  const activePage = turnTargetPage ?? visiblePage;
+  const activeIndex = Math.max(0, pages.indexOf(visiblePage));
+
+  useEffect(() => {
+    if (pages.includes(visiblePage)) return;
+    setVisiblePage(firstPage);
+    setTurnTargetPage(null);
+  }, [firstPage, pagesKey, visiblePage]);
+
+  useEffect(() => {
+    if (turnTargetPage === null) return;
+
+    const timeout = window.setTimeout(() => {
+      setVisiblePage(turnTargetPage);
+      setTurnTargetPage(null);
+    }, 680);
+
+    return () => window.clearTimeout(timeout);
+  }, [turnTargetPage]);
+
+  function renderPage(page: number) {
+    return hasSavedPreview ? (
+      <SavedLayoutPreviewPage
+        newspaper={newspaper}
+        articles={articles}
+        layoutJson={latestLayout}
+        pageNumber={page}
+        totalPages={totalPages}
+      />
+    ) : (
+      <NewspaperPage newspaper={newspaper} articles={articles} pageNumber={page} totalPages={totalPages} />
+    );
+  }
+
+  function openPage(page: number) {
+    if (page === visiblePage || isTurning) return;
+    setTurnDirection(page > visiblePage ? 1 : -1);
+    setTurnTargetPage(page);
+  }
+
+  function stepPage(direction: 1 | -1) {
+    const nextPage = pages[activeIndex + direction];
+    if (nextPage) openPage(nextPage);
+  }
+
+  return (
+    <div className="space-y-4">
+      <style>{`
+        @keyframes newspaper-page-turn-next {
+          0% {
+            transform: rotateY(0deg) translateX(0);
+            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.18);
+            filter: brightness(1);
+          }
+          45% {
+            transform: rotateY(-58deg) translateX(-10px);
+            box-shadow: -32px 24px 50px rgba(15, 23, 42, 0.3);
+            filter: brightness(0.96);
+          }
+          100% {
+            transform: rotateY(-112deg) translateX(-28px);
+            box-shadow: -46px 28px 58px rgba(15, 23, 42, 0.18);
+            filter: brightness(0.9);
+          }
+        }
+
+        @keyframes newspaper-page-turn-previous {
+          0% {
+            transform: rotateY(0deg) translateX(0);
+            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.18);
+            filter: brightness(1);
+          }
+          45% {
+            transform: rotateY(58deg) translateX(10px);
+            box-shadow: 32px 24px 50px rgba(15, 23, 42, 0.3);
+            filter: brightness(0.96);
+          }
+          100% {
+            transform: rotateY(112deg) translateX(28px);
+            box-shadow: 46px 28px 58px rgba(15, 23, 42, 0.18);
+            filter: brightness(0.9);
+          }
+        }
+
+        @keyframes newspaper-page-arrive {
+          0% {
+            opacity: 0.72;
+            transform: translateX(var(--page-arrive-offset, 18px)) scale(0.985);
+          }
+          100% {
+            opacity: 1;
+            transform: translateX(0) scale(1);
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .newspaper-page-turn-out,
+          .newspaper-page-turn-in {
+            animation: none !important;
+            transform: none !important;
+          }
+        }
+      `}</style>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">Page preview</div>
+          <div className="text-xs text-muted-foreground">
+            Page {activePage} of {totalPages}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => stepPage(-1)}
+            disabled={isTurning || activeIndex <= 0}
+            title="Previous page"
+          >
+            <ChevronLeft className="mr-1 h-4 w-4" />
+            Previous
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => stepPage(1)}
+            disabled={isTurning || activeIndex >= pages.length - 1}
+            title="Next page"
+          >
+            Next
+            <ChevronRight className="ml-1 h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-1">
+        {pages.map((page) => (
+          <button
+            key={page}
+            type="button"
+            onClick={() => openPage(page)}
+            disabled={isTurning}
+            className={`h-8 min-w-12 rounded border px-2 text-xs font-semibold transition ${
+              activePage === page
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            Page {page}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className="relative overflow-x-auto py-4"
+        style={{
+          perspective: 1800,
+          perspectiveOrigin: "50% 42%",
+        }}
+      >
+        <div
+          className="relative mx-auto"
+          style={{
+            width: 780,
+            maxWidth: "100%",
+            minHeight: 1120,
+            transformStyle: "preserve-3d",
+          }}
+        >
+          <div
+            key={`page-in-${activePage}`}
+            className={isTurning ? "newspaper-page-turn-in" : ""}
+            style={{
+              animation: isTurning ? "newspaper-page-arrive 680ms ease-out both" : undefined,
+              ["--page-arrive-offset" as string]: turnDirection === 1 ? "22px" : "-22px",
+            }}
+          >
+            {renderPage(activePage)}
+          </div>
+
+          {isTurning && (
+            <div
+              key={`page-out-${visiblePage}-${turnTargetPage}`}
+              className="newspaper-page-turn-out pointer-events-none absolute inset-x-0 top-0"
+              style={{
+                animation:
+                  turnDirection === 1
+                    ? "newspaper-page-turn-next 680ms cubic-bezier(0.2, 0.7, 0.2, 1) both"
+                    : "newspaper-page-turn-previous 680ms cubic-bezier(0.2, 0.7, 0.2, 1) both",
+                backfaceVisibility: "hidden",
+                transformOrigin: turnDirection === 1 ? "left center" : "right center",
+                transformStyle: "preserve-3d",
+                zIndex: 2,
+              }}
+            >
+              {renderPage(visiblePage)}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function EditionWorkspace() {
   const { id } = Route.useParams();
@@ -46,11 +313,77 @@ function EditionWorkspace() {
     },
   });
 
+  const { data: latestLayout } = useQuery({
+    queryKey: ["saved-layout", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("layouts")
+        .select("layout_json")
+        .eq("newspaper_id", id)
+        .order("generated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.layout_json ?? null;
+    },
+  });
+
   const genLayout = useMutation({
     mutationFn: async () => {
       if (!newspaper) return;
       const ready = articles.filter((article) => article.workflow_status?.ready_for_layout);
       if (ready.length === 0) throw new Error("Mark image step complete on at least one article first.");
+
+      const { data: savedLayout, error: savedLayoutError } = await supabase
+        .from("layouts")
+        .select("layout_json")
+        .eq("newspaper_id", id)
+        .order("generated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (savedLayoutError) throw savedLayoutError;
+
+      const savedPlacements = savedEditorPlacements(savedLayout?.layout_json);
+      if (savedPlacements.length > 0) {
+        let priority = 100;
+        const placedArticleIds = new Set(savedPlacements.map((placement) => placement.articleId));
+
+        for (const placement of savedPlacements) {
+          const { error } = await supabase
+            .from("articles")
+            .update({
+              page_number: placement.pageNumber,
+              position: placement.slotKind === "lead" ? "top" : "body",
+              headline_size: placement.slotKind === "lead" ? "big" : placement.slotWidth >= 6 ? "medium" : "small",
+              image_size: placement.slotKind === "image" || placement.slotKind === "lead" ? "large" : "small",
+              column_count: Math.min(3, Math.max(1, Math.floor(placement.slotWidth / 4))),
+              priority_score: priority,
+            })
+            .eq("id", placement.articleId);
+          if (error) throw error;
+          priority -= 1;
+        }
+
+        const unplacedArticleIds = articles
+          .map((article) => article.id)
+          .filter((articleId) => !placedArticleIds.has(articleId));
+        if (unplacedArticleIds.length > 0) {
+          const { error } = await supabase
+            .from("articles")
+            .update({
+              page_number: null,
+              position: null,
+              headline_size: null,
+              image_size: null,
+              column_count: null,
+            })
+            .in("id", unplacedArticleIds);
+          if (error) throw error;
+        }
+
+        await supabase.from("newspapers").update({ status: "pending_layout" }).eq("id", id);
+        return "saved";
+      }
 
       const { layout } = await aiFn.layout(ready, newspaper.number_of_pages);
       for (const item of layout) {
@@ -67,10 +400,12 @@ function EditionWorkspace() {
       }
       await supabase.from("layouts").insert({ newspaper_id: id, layout_json: layout });
       await supabase.from("newspapers").update({ status: "pending_layout" }).eq("id", id);
+      return "generated";
     },
-    onSuccess: () => {
+    onSuccess: (source) => {
       queryClient.invalidateQueries();
-      toast.success("Layout generated");
+      queryClient.invalidateQueries({ queryKey: ["saved-layout", id] });
+      toast.success(source === "saved" ? "Saved editor layout loaded" : "Layout generated");
       setTab("layout");
     },
     onError: (error: unknown) => toast.error(error instanceof Error ? error.message : "Layout generation failed"),
@@ -91,8 +426,12 @@ function EditionWorkspace() {
   if (!newspaper) return <div className="text-sm text-muted-foreground">Loading...</div>;
 
   const laidOut = articles.filter((article) => article.page_number);
-  const totalPages = getPrintPageCount(articles, newspaper.number_of_pages);
-  const pages = Array.from({ length: totalPages }, (_, index) => index + 1);
+  const savedPreviewPages = savedLayoutPageNumbers(latestLayout);
+  const hasSavedPreview = hasSavedEditorLayout(latestLayout);
+  const totalPages = hasSavedPreview
+    ? savedPreviewPages.length
+    : getPrintPageCount(articles, newspaper.number_of_pages);
+  const pages = hasSavedPreview ? savedPreviewPages : Array.from({ length: totalPages }, (_, index) => index + 1);
   const canEdit = role === "editor" && !["pending_approval", "approved", "published"].includes(newspaper.status);
 
   return (
@@ -175,19 +514,19 @@ function EditionWorkspace() {
         </TabsContent>
 
         <TabsContent value="preview" className="mt-4 space-y-6">
-          {laidOut.length === 0 ? (
+          {laidOut.length === 0 && !hasSavedPreview ? (
             <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
               No layout yet. Click <b>Generate layout</b> above.
             </div>
           ) : (
-            pages.map((page) => (
-              <div key={page}>
-                <div className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Page {page}
-                </div>
-                <NewspaperPage newspaper={newspaper} articles={articles} pageNumber={page} totalPages={totalPages} />
-              </div>
-            ))
+            <PageTurnPreview
+              newspaper={newspaper}
+              articles={articles}
+              latestLayout={latestLayout}
+              pages={pages}
+              totalPages={totalPages}
+              hasSavedPreview={hasSavedPreview}
+            />
           )}
         </TabsContent>
       </Tabs>
