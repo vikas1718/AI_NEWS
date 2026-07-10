@@ -1,4 +1,10 @@
-import { createFileRoute, Link, redirect, useRouteContext } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  redirect,
+  useRouteContext,
+  useRouter,
+} from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Building2, MailPlus, Settings, Shield, Trash2, Users } from "lucide-react";
@@ -26,10 +32,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  createInvitationBackend,
   listOrganizationInvitationsBackend,
   listOrganizationMembersBackend,
   removeMemberBackend,
+  sendOrganizationInvitationBackend,
   updateMemberRoleBackend,
 } from "@/lib/organization-backend";
 import { hasPermission, roleLabels, type OrganizationRole } from "@/lib/rbac";
@@ -70,9 +76,10 @@ function TeamPage() {
   const isLocalOrganization = organization?.id.startsWith("local_") ?? false;
   const db = supabaseUntyped;
   const qc = useQueryClient();
+  const router = useRouter();
   const listLocalMembers = useServerFn(listOrganizationMembersBackend);
   const listLocalInvitations = useServerFn(listOrganizationInvitationsBackend);
-  const createLocalInvitation = useServerFn(createInvitationBackend);
+  const sendInvitation = useServerFn(sendOrganizationInvitationBackend);
   const updateLocalMemberRole = useServerFn(updateMemberRoleBackend);
   const removeLocalMember = useServerFn(removeMemberBackend);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -117,51 +124,84 @@ function TeamPage() {
     queryKey: ["organization-sent-invitations", organization?.id],
     enabled: Boolean(organization?.id) && canInvite,
     queryFn: async () => {
-      if (isLocalOrganization) {
-        return (await listLocalInvitations({
-          data: { organizationId: organization!.id },
-        })) as InvitationRow[];
-      }
+      const localInvitations = isLocalOrganization
+        ? ((await listLocalInvitations({
+            data: { organizationId: organization!.id },
+          })) as InvitationRow[])
+        : [];
 
       const { data, error } = await db
         .from("organization_invitations")
         .select("id,email,role,status,created_at")
         .eq("organization_id", organization!.id)
         .order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as InvitationRow[];
+      if (error) {
+        if (isMissingInvitationSchemaError(error)) return localInvitations;
+        throw error;
+      }
+
+      const merged = new Map<string, InvitationRow>();
+      for (const invitation of (data ?? []) as InvitationRow[]) {
+        merged.set(invitation.id, invitation);
+      }
+      for (const invitation of localInvitations) {
+        merged.set(invitation.id, invitation);
+      }
+      return Array.from(merged.values()).sort((a, b) => b.created_at.localeCompare(a.created_at));
     },
   });
 
   const invite = useMutation({
     mutationFn: async () => {
-      if (isLocalOrganization) {
-        const result = await createLocalInvitation({
-          data: {
-            organizationId: organization!.id,
-            email: inviteForm.email,
-            role: inviteForm.role,
-          },
-        });
-        if (!result.ok) throw new Error(result.error);
-        return;
-      }
+      const invitationEmail = inviteForm.email.trim().toLowerCase();
+      if (!invitationEmail) throw new Error("Email address is required");
 
-      const { error } = await db.rpc("create_organization_invitation", {
-        p_organization_id: organization!.id,
-        p_email: inviteForm.email,
-        p_role: inviteForm.role,
+      console.info("[Invitations][send:start]", {
+        authenticatedEmail: ctx.user.email?.toLowerCase() ?? null,
+        invitationEmail,
+        organizationId: organization!.id,
+        reason: "Owner is sending an invitation; invitation will be stored in Supabase.",
       });
-      if (error) throw error;
+
+      const result = await sendInvitation({
+        data: {
+          organizationId: organization!.id,
+          organizationName: organization!.name,
+          logo_url: organization!.logo_url,
+          description: organization!.description,
+          organizationEmail: organization!.email,
+          phone_number: organization!.phone_number,
+          address: organization!.address,
+          organization_type: organization!.organization_type,
+          inviteEmail: invitationEmail,
+          role: inviteForm.role,
+        },
+      });
+      if (!result.ok) throw new Error(result.error);
+
+      console.info("[Invitations][send:stored]", {
+        authenticatedEmail: ctx.user.email?.toLowerCase() ?? null,
+        invitationEmail,
+        returnedInvitations: [
+          {
+            id: result.invitationId,
+            email: invitationEmail,
+            organizationId: result.organizationId,
+          },
+        ],
+        organizationId: result.organizationId,
+        reason:
+          "Invitation stored in Supabase organization_invitations; receiver lookup is by authenticated email.",
+      });
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       qc.invalidateQueries({ queryKey: ["organization-sent-invitations", organization?.id] });
+      await router.invalidate();
       setInviteOpen(false);
       setInviteForm({ email: "", role: "editor" });
       toast.success("Invitation sent");
     },
-    onError: (error: unknown) =>
-      toast.error(error instanceof Error ? error.message : "Could not send invitation"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Could not send invitation")),
   });
 
   const changeRole = useMutation({
@@ -467,5 +507,29 @@ function Info({ label, value }: { label: string; value: string | null }) {
       <dt className="text-xs font-semibold uppercase text-muted-foreground">{label}</dt>
       <dd className="mt-0.5">{value || "Not provided"}</dd>
     </div>
+  );
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message;
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return fallback;
+}
+
+function isMissingInvitationSchemaError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const message = "message" in error ? String(error.message).toLowerCase() : "";
+  const code = "code" in error ? String(error.code) : "";
+  return (
+    code === "42P01" ||
+    (message.includes("schema cache") && message.includes("organization_invitations")) ||
+    message.includes("organization_invitations does not exist")
   );
 }
