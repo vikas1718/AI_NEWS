@@ -40,6 +40,39 @@ export interface Article {
   created_at: string;
 }
 
+export interface InstagramSlideContent {
+  article_id: string;
+  caption: string;
+  mentions: string[];
+  hashtags: string[];
+}
+
+export interface SocialContentEdit {
+  caption: string;
+  mentions: string[];
+  hashtags: string[];
+  provider?: string;
+}
+
+export interface ScheduledSlide {
+  articleId: string;
+  order: number;
+  imageUrl: string | null;
+  caption: string;
+  mentions: string[];
+  hashtags: string[];
+}
+
+export interface ScheduledPost {
+  id: string;
+  platform: "instagram" | "twitter" | "facebook" | "whatsapp" | "inshorts";
+  status: "scheduled" | "cancelled";
+  scheduledAt: string;
+  createdAt: string;
+  updatedAt: string;
+  slides: ScheduledSlide[];
+}
+
 type ImageArticlePayload = Partial<Article> & {
   prompt?: string;
 };
@@ -50,7 +83,8 @@ const FN_URL = (name: string) =>
 async function callFn<T = any>(name: string, body: any): Promise<T> {
   const { data: sess } = await supabase.auth.getSession();
   const token = sess.session?.access_token;
-  const res = await fetch(FN_URL(name), {
+  const url = FN_URL(name);
+  const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -59,8 +93,16 @@ async function callFn<T = any>(name: string, body: any): Promise<T> {
     },
     body: JSON.stringify(body),
   });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json?.error ?? `fn ${name} failed`);
+  const json = await res.json().catch(() => null);
+  if (name === "edit-social-content") {
+    console.log("AI edit HTTP response:", res);
+    console.log("AI edit response JSON:", json);
+  }
+  if (!res.ok) {
+    const errorMessage = json?.error || json?.message || res.statusText || `fn ${name} failed`;
+    const stack = json?.stack ? `\n${json.stack}` : "";
+    throw new Error(`POST ${url} returned ${res.status}: ${errorMessage}${stack}`);
+  }
   return json;
 }
 
@@ -80,7 +122,29 @@ export const aiFn = {
       "generate-image",
       typeof payload === "string" ? { prompt: payload } : { article: payload },
     ),
+  instagram: (articles: Partial<Article>[]) =>
+    callFn<{ slides: InstagramSlideContent[]; provider?: string }>("generate-instagram-content", { articles }),
+  editSocialContent: (payload: {
+    platform: ScheduledPost["platform"];
+    caption: string;
+    mentions: string[];
+    hashtags: string[];
+    instructions: string;
+    article: Partial<Article> | null;
+  }) => callFn<SocialContentEdit>("edit-social-content", payload),
   layout: (articles: Article[], number_of_pages: number) =>
     callFn<{ layout: any[] }>("generate-layout", { articles, number_of_pages }),
   tts: (text: string) => callFn<{ audio_url: string; simulated: boolean }>("tts-kannada", { text }),
+};
+
+export const scheduleFn = {
+  list: () => callFn<{ posts: ScheduledPost[] }>("list-scheduled-posts", {}),
+  create: (post: { platform: ScheduledPost["platform"]; scheduledAt: string; slides: ScheduledSlide[] }) =>
+    callFn<{ post: ScheduledPost }>("schedule-post", { post }),
+  update: (postId: string, scheduledAt: string) =>
+    callFn<{ post: ScheduledPost }>("update-scheduled-post", { id: postId, scheduledAt }),
+  cancel: (postId: string) =>
+    callFn<{ post: ScheduledPost }>("cancel-scheduled-post", { id: postId }),
+  delete: (postId: string) =>
+    callFn<{ deleted: true; id: string }>("delete-scheduled-post", { id: postId }),
 };
