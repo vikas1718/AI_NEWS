@@ -94,7 +94,7 @@ export const Route = createFileRoute("/_authenticated")({
     }
 
     const [databasePendingInvitationCount, localPendingInvitationCount] = await Promise.all([
-      getDatabasePendingInvitationCount(db, user.id, user.email ?? null),
+      getDatabasePendingInvitationCount(db, user.email ?? null),
       getPendingInvitationCountBackend().catch(() => 0),
     ]);
     const pendingInvitationCount = databasePendingInvitationCount + localPendingInvitationCount;
@@ -127,25 +127,47 @@ function isMissingOrganizationSchemaError(error: unknown) {
   );
 }
 
-async function getDatabasePendingInvitationCount(
-  db: typeof supabaseUntyped,
-  userId: string,
-  email: string | null,
-) {
+async function getDatabasePendingInvitationCount(db: typeof supabaseUntyped, email: string | null) {
   const normalizedEmail = email?.trim().toLowerCase();
+  if (!normalizedEmail) {
+    console.info("[Invitations][count:skip]", {
+      authenticatedEmail: null,
+      returnedInvitations: 0,
+      organizationId: null,
+      reason: "No authenticated email is available, so pending invitations cannot be counted.",
+    });
+    return 0;
+  }
+
   const query = db
     .from("organization_invitations")
     .select("id", { count: "exact", head: true })
-    .eq("status", "pending");
-  const filteredQuery = normalizedEmail
-    ? query.or(`invitee_user_id.eq.${userId},email.eq.${normalizedEmail}`)
-    : query.eq("invitee_user_id", userId);
+    .eq("status", "pending")
+    .eq("email", normalizedEmail);
 
-  const { count, error } = await filteredQuery;
+  const { count, error } = await query;
   if (error) {
-    if (isMissingOrganizationSchemaError(error)) return 0;
+    if (isMissingOrganizationSchemaError(error)) {
+      console.info("[Invitations][count:schema-missing]", {
+        authenticatedEmail: normalizedEmail,
+        invitationEmail: normalizedEmail,
+        returnedInvitations: 0,
+        organizationId: null,
+        reason: "Organization invitation schema is unavailable; database count skipped.",
+      });
+      return 0;
+    }
     throw error;
   }
+
+  console.info("[Invitations][count:result]", {
+    authenticatedEmail: normalizedEmail,
+    invitationEmail: normalizedEmail,
+    returnedInvitations: count ?? 0,
+    organizationId: null,
+    reason: "Pending invitation count filtered only by authenticated email and status=pending.",
+  });
+
   return count ?? 0;
 }
 

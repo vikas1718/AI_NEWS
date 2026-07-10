@@ -39,7 +39,7 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
     queryKey: ["organization-invitations", user.id],
     queryFn: async () => {
       const [databaseInvitations, localInvitations] = await Promise.all([
-        getDatabasePendingInvitations(db, user.id, user.email ?? null),
+        getDatabasePendingInvitations(db, user.email ?? null),
         getPendingInvitations().catch(() => []),
       ]);
 
@@ -172,44 +172,88 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
 
 async function getDatabasePendingInvitations(
   db: typeof supabaseUntyped,
-  userId: string,
   email: string | null,
 ): Promise<Invitation[]> {
   const normalizedEmail = email?.trim().toLowerCase();
-  const fields = "id,email,role,status,created_at,organization_id,invited_by";
-  const query = db.from("organization_invitations").select(fields).eq("status", "pending");
-  const filteredQuery = normalizedEmail
-    ? query.or(`invitee_user_id.eq.${userId},email.eq.${normalizedEmail}`)
-    : query.eq("invitee_user_id", userId);
+  if (!normalizedEmail) {
+    console.info("[Invitations][query:skip]", {
+      authenticatedEmail: null,
+      returnedInvitations: [],
+      organizationId: null,
+      reason: "No authenticated email is available, so pending invitations cannot be matched.",
+    });
+    return [];
+  }
 
-  const { data, error } = await filteredQuery.order("created_at", { ascending: false });
+  console.info("[Invitations][query:start]", {
+    authenticatedEmail: normalizedEmail,
+    invitationEmail: normalizedEmail,
+    organizationId: null,
+    reason: "Email-only pending invitation lookup; no active organization or membership required.",
+  });
+
+  const fields = "id,email,role,status,created_at,organization_id,organization_name,invited_by";
+  const { data, error } = await db
+    .from("organization_invitations")
+    .select(fields)
+    .eq("status", "pending")
+    .eq("email", normalizedEmail)
+    .order("created_at", { ascending: false });
   if (error) {
-    if (isMissingOrganizationSchemaError(error)) return [];
+    if (isMissingOrganizationSchemaError(error)) {
+      console.info("[Invitations][query:schema-missing]", {
+        authenticatedEmail: normalizedEmail,
+        invitationEmail: normalizedEmail,
+        returnedInvitations: [],
+        organizationId: null,
+        reason: "Organization invitation schema is unavailable; database invitations skipped.",
+      });
+      return [];
+    }
     throw error;
   }
 
   const rows = data ?? [];
-  if (rows.length === 0) return [];
+  if (rows.length === 0) {
+    console.info("[Invitations][query:result]", {
+      authenticatedEmail: normalizedEmail,
+      invitationEmail: normalizedEmail,
+      returnedInvitations: [],
+      organizationId: null,
+      reason:
+        "No pending Supabase invitations matched the authenticated email. No organization filters were used.",
+    });
+    return [];
+  }
 
-  const organizationIds = uniqueStrings(
-    rows.map((row: DatabaseInvitationRow) => row.organization_id),
-  );
   const inviterIds = uniqueStrings(rows.map((row: DatabaseInvitationRow) => row.invited_by));
-  const [organizations, profiles] = await Promise.all([
-    getOrganizationNames(db, organizationIds),
-    getInviterProfiles(db, inviterIds),
-  ]);
+  const profiles = await getInviterProfiles(db, inviterIds);
 
-  return rows.map((row: DatabaseInvitationRow) => ({
+  const invitations = rows.map((row: DatabaseInvitationRow) => ({
     id: row.id,
     email: row.email,
     role: row.role,
     status: row.status,
     created_at: row.created_at,
-    organizations: organizations.get(row.organization_id) ?? null,
+    organizations: row.organization_name ? { name: row.organization_name } : null,
     inviter: profiles.get(row.invited_by) ?? null,
     source: "database",
   }));
+
+  console.info("[Invitations][query:result]", {
+    authenticatedEmail: normalizedEmail,
+    invitationEmail: normalizedEmail,
+    returnedInvitations: rows.map((row: DatabaseInvitationRow) => ({
+      id: row.id,
+      email: row.email,
+      organizationId: row.organization_id,
+      source: "database",
+    })),
+    organizationId: null,
+    reason: "Returned pending invitations filtered only by authenticated email and status=pending.",
+  });
+
+  return invitations;
 }
 
 type DatabaseInvitationRow = {
@@ -219,24 +263,9 @@ type DatabaseInvitationRow = {
   status: "pending" | "accepted" | "declined" | "cancelled";
   created_at: string;
   organization_id: string;
+  organization_name: string | null;
   invited_by: string;
 };
-
-async function getOrganizationNames(db: typeof supabaseUntyped, ids: string[]) {
-  const organizations = new Map<string, { name: string }>();
-  if (ids.length === 0) return organizations;
-
-  const { data, error } = await db.from("organizations").select("id,name").in("id", ids);
-  if (error) {
-    if (isMissingOrganizationSchemaError(error)) return organizations;
-    throw error;
-  }
-
-  for (const row of data ?? []) {
-    organizations.set(row.id, { name: row.name });
-  }
-  return organizations;
-}
 
 async function getInviterProfiles(db: typeof supabaseUntyped, ids: string[]) {
   const profiles = new Map<string, { full_name: string | null; email: string }>();

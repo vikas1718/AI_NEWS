@@ -31,6 +31,19 @@ type CreateInvitationInput = {
   role: InviteRole;
 };
 
+type SendOrganizationInvitationInput = {
+  organizationId: string;
+  organizationName: string;
+  logo_url: string | null;
+  description: string | null;
+  organizationEmail: string | null;
+  phone_number: string | null;
+  address: string | null;
+  organization_type: string | null;
+  inviteEmail: string;
+  role: InviteRole;
+};
+
 type ChangeRoleInput = {
   memberId: string;
   role: InviteRole;
@@ -39,6 +52,8 @@ type ChangeRoleInput = {
 type BaseResult = { ok: true } | { ok: false; error: string };
 type CreateOrganizationResult = { ok: true; organizationId: string } | { ok: false; error: string };
 type CreateInvitationResult = { ok: true; invitationId: string } | { ok: false; error: string };
+type SendInvitationResult =
+  { ok: true; invitationId: string; organizationId: string } | { ok: false; error: string };
 type InvitationActionResult = { ok: true; organizationId?: string } | { ok: false; error: string };
 
 type InviteRole = Exclude<OrganizationRole, "owner">;
@@ -137,7 +152,7 @@ export const getPendingInvitationCountBackend = createServerFn({ method: "GET" }
     const store = await readStore();
     const email = getContextEmail(context);
     if (!email) return 0;
-    return getPendingInvitationsForUser(store, context.userId, email).length;
+    return getPendingInvitationsForEmail(store, email).length;
   });
 
 export const getPendingInvitationsBackend = createServerFn({ method: "GET" })
@@ -151,15 +166,23 @@ export const getPendingInvitationsBackend = createServerFn({ method: "GET" })
       return [];
     }
 
-    const invitations = getPendingInvitationsForUser(store, context.userId, email);
-    let inviteeChanged = false;
-    for (const invitation of invitations) {
-      if (!invitation.invitee_user_id) {
-        invitation.invitee_user_id = context.userId;
-        inviteeChanged = true;
-      }
-    }
-    if (profileChanged || inviteeChanged) await writeStore(store);
+    const invitations = getPendingInvitationsForEmail(store, email);
+
+    console.info("[Invitations][local-query:result]", {
+      authenticatedEmail: email,
+      invitationEmail: email,
+      returnedInvitations: invitations.map((invitation) => ({
+        id: invitation.id,
+        email: invitation.email,
+        organizationId: invitation.organization_id,
+        source: "local",
+      })),
+      organizationId: null,
+      reason:
+        "Local fallback pending invitations filtered only by authenticated email and status=pending.",
+    });
+
+    if (profileChanged) await writeStore(store);
 
     return invitations.map((invitation) => receivedInvitationView(store, invitation));
   });
@@ -413,6 +436,159 @@ export const createInvitationBackend = createServerFn({ method: "POST" })
     }
   });
 
+export const sendOrganizationInvitationBackend = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((data: unknown): SendOrganizationInvitationInput => {
+    const input = isRecord(data) ? data : {};
+    return {
+      organizationId: cleanString(input.organizationId) ?? "",
+      organizationName: cleanString(input.organizationName) ?? "",
+      logo_url: cleanString(input.logo_url),
+      description: cleanString(input.description),
+      organizationEmail: cleanString(input.organizationEmail),
+      phone_number: cleanString(input.phone_number),
+      address: cleanString(input.address),
+      organization_type: cleanString(input.organization_type),
+      inviteEmail: normalizeEmail(input.inviteEmail) ?? "",
+      role: parseInviteRole(input.role) ?? "editor",
+    };
+  })
+  .handler(async ({ data, context }): Promise<SendInvitationResult> => {
+    if (!isEmail(data.inviteEmail)) {
+      return { ok: false, error: "Enter a valid email address." };
+    }
+    if (!data.organizationName && !data.organizationId) {
+      return { ok: false, error: "Organization is required." };
+    }
+
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const admin = supabaseAdmin as any;
+      const authenticatedEmail = getContextEmail(context);
+      if (!authenticatedEmail) {
+        return { ok: false, error: "Authenticated email is required to send invitations." };
+      }
+
+      console.info("[Invitations][server-send:start]", {
+        authenticatedEmail,
+        invitationEmail: data.inviteEmail,
+        organizationId: data.organizationId || null,
+        reason:
+          "Server-side invitation send; avoids browser RLS/schema-cache failures and stores in Supabase.",
+      });
+
+      const organizationId = data.organizationId;
+      const store = await readStore();
+      const profileChanged = upsertProfileFromContext(store, context);
+      const localOrganization = organizationId ? store.organizations[organizationId] : null;
+      const localMember = localOrganization
+        ? getActiveMember(store, organizationId, context.userId)
+        : null;
+
+      if (localOrganization && !localMember) {
+        return { ok: false, error: "You are not an active member of this organization." };
+      }
+
+      if (localMember && localMember.role !== "owner" && localMember.role !== "chief_editor") {
+        return { ok: false, error: "Your role cannot invite organization members." };
+      }
+
+      if (data.inviteEmail === authenticatedEmail) {
+        return { ok: false, error: "You cannot invite your own account." };
+      }
+
+      if (
+        localOrganization &&
+        isEmailAlreadyActiveMember(store, organizationId, data.inviteEmail)
+      ) {
+        return {
+          ok: false,
+          error: "This email address is already a member of the organization.",
+        };
+      }
+
+      await ensureDatabaseProfile(admin, context);
+      const databaseProfile = await getProfileByEmail(admin, data.inviteEmail);
+      const localProfile = Object.values(store.profiles).find(
+        (profile) => profile.email === data.inviteEmail,
+      );
+      const inviteeUserId = databaseProfile?.id ?? localProfile?.id ?? null;
+
+      const existingInvitation = await getPendingInvitationByEmail(
+        admin,
+        organizationId,
+        data.inviteEmail,
+      );
+      if (existingInvitation) {
+        console.info("[Invitations][server-send:existing]", {
+          authenticatedEmail,
+          invitationEmail: data.inviteEmail,
+          returnedInvitations: [
+            { id: existingInvitation.id, email: data.inviteEmail, organizationId },
+          ],
+          organizationId,
+          reason: "A pending invitation already exists for this email and organization.",
+        });
+
+        const mirrorChanged = mirrorSentInvitationToLocalStore(store, {
+          invitationId: existingInvitation.id,
+          organizationId,
+          email: data.inviteEmail,
+          role: data.role,
+          invitedBy: context.userId,
+          inviteeUserId,
+          createdAt: existingInvitation.created_at,
+        });
+        if (profileChanged || mirrorChanged) await writeStore(store);
+        return { ok: true, invitationId: existingInvitation.id, organizationId };
+      }
+
+      const { data: invitation, error } = await admin
+        .from("organization_invitations")
+        .insert({
+          organization_id: organizationId,
+          organization_name: data.organizationName || localOrganization?.name || null,
+          email: data.inviteEmail,
+          role: data.role,
+          invited_by: context.userId,
+          invitee_user_id: inviteeUserId,
+        })
+        .select("id,email,organization_id,created_at")
+        .single();
+      if (error) throw error;
+
+      const mirrorChanged = mirrorSentInvitationToLocalStore(store, {
+        invitationId: invitation.id,
+        organizationId,
+        email: data.inviteEmail,
+        role: data.role,
+        invitedBy: context.userId,
+        inviteeUserId,
+        createdAt: invitation.created_at,
+      });
+      if (profileChanged || mirrorChanged) await writeStore(store);
+
+      console.info("[Invitations][server-send:stored]", {
+        authenticatedEmail,
+        invitationEmail: data.inviteEmail,
+        returnedInvitations: [
+          {
+            id: invitation.id,
+            email: invitation.email,
+            organizationId: invitation.organization_id,
+          },
+        ],
+        organizationId,
+        reason: "Invitation stored in Supabase and will be fetched by authenticated email.",
+      });
+
+      return { ok: true, invitationId: invitation.id, organizationId };
+    } catch (error: unknown) {
+      console.error("[Invitations][server-send:error]", error);
+      return { ok: false, error: getErrorMessage(error, "Could not send invitation") };
+    }
+  });
+
 export const acceptInvitationBackend = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((data: unknown): InvitationIdInput => {
@@ -640,6 +816,86 @@ export const deleteAccountBackend = createServerFn({ method: "POST" })
     }
   });
 
+async function ensureDatabaseProfile(admin: any, context: any) {
+  const email = getContextEmail(context);
+  if (!email) throw new Error("Authenticated email is required.");
+
+  const { error } = await admin.from("profiles").upsert(
+    {
+      id: context.userId,
+      email,
+      full_name: getContextFullName(context) ?? email,
+    },
+    { onConflict: "id" },
+  );
+  if (error) throw error;
+}
+
+async function getProfileByEmail(admin: any, email: string) {
+  const { data, error } = await admin
+    .from("profiles")
+    .select("id,email")
+    .eq("email", email)
+    .maybeSingle();
+  if (error) throw error;
+  return data as { id: string; email: string } | null;
+}
+
+async function getPendingInvitationByEmail(admin: any, organizationId: string, email: string) {
+  const { data, error } = await admin
+    .from("organization_invitations")
+    .select("id,created_at")
+    .eq("organization_id", organizationId)
+    .eq("email", email)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (error) throw error;
+  return data as { id: string; created_at: string } | null;
+}
+
+function mirrorSentInvitationToLocalStore(
+  store: LocalOrganizationStore,
+  input: {
+    invitationId: string;
+    organizationId: string;
+    email: string;
+    role: InviteRole;
+    invitedBy: string;
+    inviteeUserId: string | null;
+    createdAt: string;
+  },
+) {
+  if (!store.organizations[input.organizationId]) return false;
+
+  const existing = store.invitations[input.invitationId];
+  if (existing && existing.status !== "pending") return false;
+
+  store.invitations[input.invitationId] = {
+    id: input.invitationId,
+    organization_id: input.organizationId,
+    email: input.email,
+    role: input.role,
+    status: "pending",
+    invited_by: input.invitedBy,
+    invitee_user_id: input.inviteeUserId,
+    created_at: existing?.created_at ?? input.createdAt,
+    responded_at: null,
+  };
+
+  if (!existing) {
+    appendAuditLog(store, {
+      organizationId: input.organizationId,
+      actorId: input.invitedBy,
+      action: "invitation.created",
+      targetTable: "organization_invitations",
+      targetId: input.invitationId,
+      metadata: { email: input.email, role: input.role, mirrored_from: "supabase" },
+    });
+  }
+
+  return true;
+}
+
 async function cleanupSupabaseAccount(userId: string, email: string | null) {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const admin = supabaseAdmin as any;
@@ -801,25 +1057,15 @@ function isEmailAlreadyActiveMember(
   });
 }
 
-function getPendingInvitationsForUser(
-  store: LocalOrganizationStore,
-  userId: string,
-  email: string,
-) {
+function getPendingInvitationsForEmail(store: LocalOrganizationStore, email: string) {
   return Object.values(store.invitations)
-    .filter(
-      (invitation) =>
-        invitation.status === "pending" &&
-        (invitation.invitee_user_id === userId || invitation.email === email),
-    )
+    .filter((invitation) => invitation.status === "pending" && invitation.email === email)
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 function invitationBelongsToContext(invitation: LocalInvitation, context: any) {
   const email = getContextEmail(context);
-  return Boolean(
-    invitation.invitee_user_id === context.userId || (email && invitation.email === email),
-  );
+  return Boolean(email && invitation.email === email);
 }
 
 function memberView(store: LocalOrganizationStore, member: OrganizationMember): LocalMemberView {
