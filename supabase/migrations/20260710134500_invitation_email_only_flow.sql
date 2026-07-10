@@ -1,0 +1,2 @@
+-- Superseded by 20260710170000_create_organization_invitation_schema.sql.
+-- Kept as a no-op so Supabase migration history remains ordered.

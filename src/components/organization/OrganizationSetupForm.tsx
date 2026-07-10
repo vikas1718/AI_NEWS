@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { createOrganizationBackend } from "@/lib/organization-backend";
+import { supabaseUntyped } from "@/lib/supabase-untyped";
 
 type OrganizationSetupFormProps = {
   title?: string;
@@ -26,6 +27,7 @@ export function OrganizationSetupForm({
 }: OrganizationSetupFormProps) {
   const navigate = useNavigate();
   const router = useRouter();
+  const db = supabaseUntyped;
   const createOrganizationOnBackend = useServerFn(createOrganizationBackend);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
@@ -47,19 +49,44 @@ export function OrganizationSetupForm({
 
     setLoading(true);
     try {
-      const result = await createOrganizationOnBackend({
-        data: {
-          name,
-          logo_url: form.logo_url,
-          description: form.description,
-          email: form.email,
-          phone_number: form.phone_number,
-          address: form.address,
-        },
+      const payload = {
+        name,
+        logo_url: form.logo_url,
+        description: form.description,
+        email: form.email,
+        phone_number: form.phone_number,
+        address: form.address,
+      };
+
+      const { data: organizationId, error } = await db.rpc("create_organization", {
+        p_name: payload.name,
+        p_logo_url: payload.logo_url,
+        p_description: payload.description,
+        p_email: payload.email,
+        p_phone_number: payload.phone_number,
+        p_address: payload.address,
+        p_organization_type: null,
       });
-      if (!result.ok) {
-        toast.error(result.error);
-        return;
+
+      if (error) {
+        if (!isMissingOrganizationSchemaError(error)) throw error;
+
+        console.info("[Invitations][organization:create:fallback]", {
+          organizationId: null,
+          reason: "Supabase organization schema is unavailable; using local fallback organization.",
+        });
+
+        const result = await createOrganizationOnBackend({ data: payload });
+        if (!result.ok) {
+          toast.error(result.error);
+          return;
+        }
+      } else {
+        console.info("[Invitations][organization:create]", {
+          organizationId,
+          reason:
+            "Organization created in Supabase so future invitations are visible across machines.",
+        });
       }
 
       await router.invalidate();
@@ -145,6 +172,17 @@ export function OrganizationSetupForm({
         </Button>
       </form>
     </Card>
+  );
+}
+
+function isMissingOrganizationSchemaError(error: unknown) {
+  if (!error || typeof error !== "object" || !("message" in error)) return false;
+  const message = String(error.message).toLowerCase();
+  return (
+    message.includes("schema cache") ||
+    message.includes("could not find the function") ||
+    message.includes("create_organization") ||
+    message.includes("does not exist")
   );
 }
 
