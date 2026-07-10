@@ -12,7 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthenticatedPipelineRouteImport } from './routes/_authenticated/pipeline'
+import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
+import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
+import { Route as AuthenticatedOrganizationSettingsRouteImport } from './routes/_authenticated/organization-settings'
+import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedMultiplatformRouteImport } from './routes/_authenticated/multiplatform'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedAccessDeniedRouteImport } from './routes/_authenticated/access-denied'
@@ -123,7 +126,10 @@ export interface FileRoutesByFullPath {
   '/access-denied': typeof AuthenticatedAccessDeniedRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/multiplatform': typeof AuthenticatedMultiplatformRoute
-  '/pipeline': typeof AuthenticatedPipelineRoute
+  '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
+  '/team': typeof AuthenticatedTeamRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/multiplatform/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
@@ -138,7 +144,10 @@ export interface FileRoutesByTo {
   '/access-denied': typeof AuthenticatedAccessDeniedRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/multiplatform': typeof AuthenticatedMultiplatformRoute
-  '/pipeline': typeof AuthenticatedPipelineRoute
+  '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
+  '/team': typeof AuthenticatedTeamRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/multiplatform/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
@@ -155,7 +164,10 @@ export interface FileRoutesById {
   '/_authenticated/access-denied': typeof AuthenticatedAccessDeniedRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/multiplatform': typeof AuthenticatedMultiplatformRoute
-  '/_authenticated/pipeline': typeof AuthenticatedPipelineRoute
+  '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
+  '/_authenticated/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
+  '/_authenticated/settings': typeof AuthenticatedSettingsRoute
+  '/_authenticated/team': typeof AuthenticatedTeamRoute
   '/_authenticated/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/_authenticated/multiplatform_/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/_authenticated/published/$id': typeof AuthenticatedPublishedIdRoute
@@ -172,7 +184,10 @@ export interface FileRouteTypes {
     | '/access-denied'
     | '/dashboard'
     | '/multiplatform'
-    | '/pipeline'
+    | '/onboarding'
+    | '/organization-settings'
+    | '/settings'
+    | '/team'
     | '/editions/$id'
     | '/multiplatform/instagram'
     | '/published/$id'
@@ -187,7 +202,10 @@ export interface FileRouteTypes {
     | '/access-denied'
     | '/dashboard'
     | '/multiplatform'
-    | '/pipeline'
+    | '/onboarding'
+    | '/organization-settings'
+    | '/settings'
+    | '/team'
     | '/editions/$id'
     | '/multiplatform/instagram'
     | '/published/$id'
@@ -203,7 +221,10 @@ export interface FileRouteTypes {
     | '/_authenticated/access-denied'
     | '/_authenticated/dashboard'
     | '/_authenticated/multiplatform'
-    | '/_authenticated/pipeline'
+    | '/_authenticated/onboarding'
+    | '/_authenticated/organization-settings'
+    | '/_authenticated/settings'
+    | '/_authenticated/team'
     | '/_authenticated/editions/$id'
     | '/_authenticated/multiplatform_/instagram'
     | '/_authenticated/published/$id'
@@ -347,7 +368,10 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAccessDeniedRoute: typeof AuthenticatedAccessDeniedRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedMultiplatformRoute: typeof AuthenticatedMultiplatformRoute
-  AuthenticatedPipelineRoute: typeof AuthenticatedPipelineRoute
+  AuthenticatedOnboardingRoute: typeof AuthenticatedOnboardingRoute
+  AuthenticatedOrganizationSettingsRoute: typeof AuthenticatedOrganizationSettingsRoute
+  AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
+  AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
   AuthenticatedEditionsIdRoute: typeof AuthenticatedEditionsIdRoute
   AuthenticatedMultiplatformInstagramRoute: typeof AuthenticatedMultiplatformInstagramRoute
   AuthenticatedPublishedIdRoute: typeof AuthenticatedPublishedIdRoute
@@ -361,7 +385,11 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAccessDeniedRoute: AuthenticatedAccessDeniedRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedMultiplatformRoute: AuthenticatedMultiplatformRoute,
-  AuthenticatedPipelineRoute: AuthenticatedPipelineRoute,
+  AuthenticatedOnboardingRoute: AuthenticatedOnboardingRoute,
+  AuthenticatedOrganizationSettingsRoute:
+    AuthenticatedOrganizationSettingsRoute,
+  AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
+  AuthenticatedTeamRoute: AuthenticatedTeamRoute,
   AuthenticatedEditionsIdRoute: AuthenticatedEditionsIdRoute,
   AuthenticatedMultiplatformInstagramRoute:
     AuthenticatedMultiplatformInstagramRoute,
