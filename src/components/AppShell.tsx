@@ -1,23 +1,56 @@
-import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Newspaper, FileCheck2, LogOut, Menu, X } from "lucide-react";
+import { Link, useNavigate, useRouteContext, useRouterState } from "@tanstack/react-router";
+import {
+  Building2,
+  FileCheck2,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Newspaper,
+  UserRound,
+  Users,
+  X,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+
 import { supabase } from "@/integrations/supabase/client";
-import { useRouteContext } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
+import { hasPermission, roleLabels, type PermissionKey } from "@/lib/rbac";
+
+type NavRoute =
+  "/dashboard" | "/editions" | "/review" | "/team" | "/settings" | "/organization-settings";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const ctx = useRouteContext({ from: "/_authenticated" });
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const navigate = useNavigate();
-  const role = ctx.role;
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  const items = [
+  const can = (permission: PermissionKey) => hasPermission(ctx.permissions, permission);
+
+  const items: Array<{
+    to: NavRoute;
+    label: string;
+    icon: typeof LayoutDashboard;
+    show: boolean;
+  }> = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: true },
-    { to: "/editions", label: role === "editor" ? "My Editions" : "Editions", icon: Newspaper, show: true },
-    { to: "/review", label: "Review Queue", icon: FileCheck2, show: role === "chief_editor" },
+    { to: "/editions", label: "Editions", icon: Newspaper, show: can("access_assigned_pages") },
+    { to: "/review", label: "Review Queue", icon: FileCheck2, show: can("review_articles") },
+    {
+      to: "/team",
+      label: ctx.organization ? "Team" : "Create Team",
+      icon: Users,
+      show: !ctx.organization || can("manage_team"),
+    },
+    { to: "/settings", label: "Settings", icon: UserRound, show: true },
+    {
+      to: "/organization-settings",
+      label: "Organization Settings",
+      icon: Building2,
+      show: can("organization_settings"),
+    },
   ].filter((x) => x.show);
 
   async function signOut() {
@@ -37,13 +70,16 @@ export function AppShell({ children }: { children: ReactNode }) {
     setMobileSidebarOpen(false);
   }, [pathname]);
 
+  const roleLabel = ctx.role ? roleLabels[ctx.role] : "Create workspace";
+  const organizationName = ctx.organization?.name ?? "Set up team";
+
   const sidebar = (
     <div className="flex h-full w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex items-center justify-between border-b border-sidebar-border px-4 py-3">
         <Link to="/dashboard" className="flex min-w-0 items-center gap-2">
           <Newspaper className="h-5 w-5 shrink-0 text-primary" />
-          <span className="truncate font-serif text-lg font-bold">Prajavani</span>
-          <span className="shrink-0 text-xs text-sidebar-foreground/60">AI Studio</span>
+          <span className="truncate font-serif text-lg font-bold">AI News</span>
+          <span className="shrink-0 text-xs text-sidebar-foreground/60">Studio</span>
         </Link>
         <button
           type="button"
@@ -56,7 +92,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
       <nav className="flex-1 px-2 py-4">
         {items.map((it) => {
-          const active = pathname === it.to || (it.to !== "/dashboard" && pathname.startsWith(it.to));
+          const active =
+            pathname === it.to || (it.to !== "/dashboard" && pathname.startsWith(it.to));
           return (
             <Link
               key={it.to}
@@ -69,7 +106,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               )}
             >
               <it.icon className="h-4 w-4" />
-              {it.label}
+              <span className="min-w-0 flex-1 truncate">{it.label}</span>
+              {it.to === "/dashboard" && ctx.pendingInvitationCount > 0 && (
+                <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
+                  {ctx.pendingInvitationCount}
+                </span>
+              )}
             </Link>
           );
         })}
@@ -77,7 +119,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="border-t border-sidebar-border p-3 text-xs">
         <div className="mb-2 px-2">
           <div className="truncate font-medium">{ctx.user.email}</div>
-          <div className="text-sidebar-foreground/60">{role === "chief_editor" ? "Chief Editor" : "Editor"}</div>
+          <div className="truncate text-sidebar-foreground/60">{organizationName}</div>
+          <div className="text-sidebar-foreground/60">{roleLabel}</div>
         </div>
         <button
           type="button"
@@ -133,10 +176,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Menu className="h-4 w-4" />
             </button>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">Prajavani AI Studio</div>
-              <div className="truncate text-xs text-muted-foreground">
-                {role === "chief_editor" ? "Chief Editor" : "Editor"} workspace
-              </div>
+              <div className="truncate text-sm font-semibold">{organizationName}</div>
+              <div className="truncate text-xs text-muted-foreground">{roleLabel} workspace</div>
             </div>
           </div>
         </header>

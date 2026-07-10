@@ -1,1 +1,12 @@
 project_id = "yhrlxcldnenexhlxcbuz"
+
+[auth]
+site_url = "http://127.0.0.1:8080"
+additional_redirect_urls = [
+  "http://127.0.0.1:8080/**",
+  "http://localhost:8080/**",
+]
+
+[auth.email.template.recovery]
+subject = "Your AI News Studio password reset OTP"
+content_path = "./supabase/templates/recovery.html"

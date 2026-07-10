@@ -96,15 +96,19 @@ function articleParagraphs(article?: Article) {
     .filter(Boolean);
 }
 
-function PrajavaniMasthead() {
+function AiNewsMasthead() {
   return (
     <div className="select-none text-newsprint-ink">
       <div className="grid grid-cols-[1fr_auto_1fr] items-end leading-none">
-        <span className="text-right font-kannada-serif text-[50px] font-black leading-none tracking-normal">ಪ್ರಜಾ</span>
+        <span className="text-right font-kannada-serif text-[50px] font-black leading-none tracking-normal">
+          ಪ್ರಜಾ
+        </span>
         <div className="mb-1 flex w-28 justify-center">
-          <img src="/prajavani-nandi.png" alt="Prajavani Nandi logo" className="h-12 w-28 object-contain" />
+          <span className="font-serif text-[30px] font-black leading-none">AI News</span>
         </div>
-        <span className="text-left font-kannada-serif text-[50px] font-black leading-none tracking-normal">ವಾಣಿ</span>
+        <span className="text-left font-kannada-serif text-[50px] font-black leading-none tracking-normal">
+          ವಾಣಿ
+        </span>
       </div>
       <div className="-mt-1 font-kannada text-[10px] font-semibold leading-none tracking-wide">
         ಆತ್ಮ ವಿಶ್ವಾಸದ ಕನ್ನಡ ದಿನಪತ್ರಿಕೆ
@@ -130,7 +134,9 @@ function AdBlock({ assignment }: { assignment?: SavedAssignment }) {
           {assignment?.ad?.subtitle && (
             <div className="text-[9px] font-semibold leading-tight">{assignment.ad.subtitle}</div>
           )}
-          {assignment?.ad?.contact && <div className="text-[8px] leading-tight">{assignment.ad.contact}</div>}
+          {assignment?.ad?.contact && (
+            <div className="text-[8px] leading-tight">{assignment.ad.contact}</div>
+          )}
           <div className="text-[8px] uppercase tracking-wide opacity-70">
             {assignment?.ad?.note ?? assignment?.ad?.size ?? "Reserved space"}
           </div>
@@ -153,12 +159,18 @@ function articleFit(article: Article | undefined, slot: SavedSlot) {
 }
 
 function ArticleBlock({ article, slot }: { article?: Article; slot: SavedSlot }) {
-  if (!article) return <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground" />;
+  if (!article)
+    return (
+      <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground" />
+    );
   const fit = articleFit(article, slot);
   const paragraphs = articleParagraphs(article);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden border border-newsprint-rule bg-white text-newsprint-ink" style={{ padding: fit.padding, gap: fit.gap }}>
+    <div
+      className="flex h-full flex-col overflow-hidden border border-newsprint-rule bg-white text-newsprint-ink"
+      style={{ padding: fit.padding, gap: fit.gap }}
+    >
       <h3
         className="m-0 text-balance font-kannada-serif font-black"
         style={{ fontSize: fit.headlineSize, lineHeight: slot.kind === "lead" ? 1 : 1.04 }}
@@ -194,7 +206,9 @@ function ArticleBlock({ article, slot }: { article?: Article; slot: SavedSlot })
 function HeaderQuoteBox({ quote }: { quote?: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col justify-center overflow-hidden border border-newsprint-rule bg-white px-3 py-2 text-left text-newsprint-ink">
-      <div className="font-kannada text-[12px] font-semibold leading-snug">{quote || DEFAULT_HEADER_QUOTE}</div>
+      <div className="font-kannada text-[12px] font-semibold leading-snug">
+        {quote || DEFAULT_HEADER_QUOTE}
+      </div>
     </div>
   );
 }
@@ -203,7 +217,13 @@ function headerAdAssignment(pageState: SavedPageState) {
   return pageState.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID];
 }
 
-export function SavedLayoutPreviewPage({ newspaper, articles, layoutJson, pageNumber, totalPages }: Props) {
+export function SavedLayoutPreviewPage({
+  newspaper,
+  articles,
+  layoutJson,
+  pageNumber,
+  totalPages,
+}: Props) {
   const savedLayout = readSavedLayout(layoutJson);
   const pageState = savedLayout?.pages[String(pageNumber)];
   const articleById = new Map(articles.map((article) => [article.id, article]));
@@ -220,18 +240,28 @@ export function SavedLayoutPreviewPage({ newspaper, articles, layoutJson, pageNu
 
   return (
     <div className="w-full overflow-x-auto pb-2">
-      <div data-print-page className="newsprint mx-auto flex flex-col overflow-hidden shadow-xl" style={pageStyle}>
+      <div
+        data-print-page
+        className="newsprint mx-auto flex flex-col overflow-hidden shadow-xl"
+        style={pageStyle}
+      >
         <div className="mb-3 border-b-4 border-double border-newsprint-ink pb-2">
           {pageNumber === 1 ? (
             <div
               className="grid items-stretch gap-3"
-              style={{ gridTemplateColumns: `repeat(${GRID_COLUMNS}, minmax(0, 1fr))`, gridTemplateRows: "86px" }}
+              style={{
+                gridTemplateColumns: `repeat(${GRID_COLUMNS}, minmax(0, 1fr))`,
+                gridTemplateRows: "86px",
+              }}
             >
               <div style={{ gridColumn: "1 / span 3", gridRow: "1 / span 1" }}>
                 <AdBlock assignment={headerAdAssignment(pageState)} />
               </div>
-              <div className="flex flex-col items-center justify-center text-center" style={{ gridColumn: "4 / span 6" }}>
-                <PrajavaniMasthead />
+              <div
+                className="flex flex-col items-center justify-center text-center"
+                style={{ gridColumn: "4 / span 6" }}
+              >
+                <AiNewsMasthead />
               </div>
               <div style={{ gridColumn: "10 / span 3", gridRow: "1 / span 1" }}>
                 <HeaderQuoteBox quote={pageState.headerQuote} />
@@ -240,7 +270,9 @@ export function SavedLayoutPreviewPage({ newspaper, articles, layoutJson, pageNu
           ) : (
             <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.22em]">
               <span>{newspaper.edition_name}</span>
-              <span>Page {pageNumber} of {totalPages}</span>
+              <span>
+                Page {pageNumber} of {totalPages}
+              </span>
             </div>
           )}
         </div>
@@ -259,12 +291,20 @@ export function SavedLayoutPreviewPage({ newspaper, articles, layoutJson, pageNu
               <div
                 key={slot.id}
                 className="min-h-0 overflow-hidden"
-                style={{ gridColumn: `${slot.x} / span ${slot.w}`, gridRow: `${slot.y} / span ${slot.h}` }}
+                style={{
+                  gridColumn: `${slot.x} / span ${slot.w}`,
+                  gridRow: `${slot.y} / span ${slot.h}`,
+                }}
               >
                 {assignment?.ad || slot.kind === "ad" ? (
                   <AdBlock assignment={assignment} />
                 ) : (
-                  <ArticleBlock article={assignment?.articleId ? articleById.get(assignment.articleId) : undefined} slot={slot} />
+                  <ArticleBlock
+                    article={
+                      assignment?.articleId ? articleById.get(assignment.articleId) : undefined
+                    }
+                    slot={slot}
+                  />
                 )}
               </div>
             );

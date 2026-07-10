@@ -12,8 +12,12 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthenticatedPipelineRouteImport } from './routes/_authenticated/pipeline'
+import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
+import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
+import { Route as AuthenticatedOrganizationSettingsRouteImport } from './routes/_authenticated/organization-settings'
+import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedAccessDeniedRouteImport } from './routes/_authenticated/access-denied'
 import { Route as AuthenticatedAboutRouteImport } from './routes/_authenticated/about'
 import { Route as AuthenticatedReviewIndexRouteImport } from './routes/_authenticated/review/index'
 import { Route as AuthenticatedEditionsIndexRouteImport } from './routes/_authenticated/editions/index'
@@ -35,9 +39,25 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedPipelineRoute = AuthenticatedPipelineRouteImport.update({
-  id: '/pipeline',
-  path: '/pipeline',
+const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedOrganizationSettingsRoute =
+  AuthenticatedOrganizationSettingsRouteImport.update({
+    id: '/organization-settings',
+    path: '/organization-settings',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedOnboardingRoute = AuthenticatedOnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
@@ -45,6 +65,12 @@ const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedAccessDeniedRoute =
+  AuthenticatedAccessDeniedRouteImport.update({
+    id: '/access-denied',
+    path: '/access-denied',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedAboutRoute = AuthenticatedAboutRouteImport.update({
   id: '/about',
   path: '/about',
@@ -83,8 +109,12 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/about': typeof AuthenticatedAboutRoute
+  '/access-denied': typeof AuthenticatedAccessDeniedRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/pipeline': typeof AuthenticatedPipelineRoute
+  '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
+  '/team': typeof AuthenticatedTeamRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
   '/review/$id': typeof AuthenticatedReviewIdRoute
@@ -95,8 +125,12 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/about': typeof AuthenticatedAboutRoute
+  '/access-denied': typeof AuthenticatedAccessDeniedRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/pipeline': typeof AuthenticatedPipelineRoute
+  '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
+  '/team': typeof AuthenticatedTeamRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
   '/review/$id': typeof AuthenticatedReviewIdRoute
@@ -109,8 +143,12 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/about': typeof AuthenticatedAboutRoute
+  '/_authenticated/access-denied': typeof AuthenticatedAccessDeniedRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
-  '/_authenticated/pipeline': typeof AuthenticatedPipelineRoute
+  '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
+  '/_authenticated/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
+  '/_authenticated/settings': typeof AuthenticatedSettingsRoute
+  '/_authenticated/team': typeof AuthenticatedTeamRoute
   '/_authenticated/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/_authenticated/published/$id': typeof AuthenticatedPublishedIdRoute
   '/_authenticated/review/$id': typeof AuthenticatedReviewIdRoute
@@ -123,8 +161,12 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/about'
+    | '/access-denied'
     | '/dashboard'
-    | '/pipeline'
+    | '/onboarding'
+    | '/organization-settings'
+    | '/settings'
+    | '/team'
     | '/editions/$id'
     | '/published/$id'
     | '/review/$id'
@@ -135,8 +177,12 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/about'
+    | '/access-denied'
     | '/dashboard'
-    | '/pipeline'
+    | '/onboarding'
+    | '/organization-settings'
+    | '/settings'
+    | '/team'
     | '/editions/$id'
     | '/published/$id'
     | '/review/$id'
@@ -148,8 +194,12 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/about'
+    | '/_authenticated/access-denied'
     | '/_authenticated/dashboard'
-    | '/_authenticated/pipeline'
+    | '/_authenticated/onboarding'
+    | '/_authenticated/organization-settings'
+    | '/_authenticated/settings'
+    | '/_authenticated/team'
     | '/_authenticated/editions/$id'
     | '/_authenticated/published/$id'
     | '/_authenticated/review/$id'
@@ -186,11 +236,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/pipeline': {
-      id: '/_authenticated/pipeline'
-      path: '/pipeline'
-      fullPath: '/pipeline'
-      preLoaderRoute: typeof AuthenticatedPipelineRouteImport
+    '/_authenticated/team': {
+      id: '/_authenticated/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof AuthenticatedTeamRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/settings': {
+      id: '/_authenticated/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthenticatedSettingsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/organization-settings': {
+      id: '/_authenticated/organization-settings'
+      path: '/organization-settings'
+      fullPath: '/organization-settings'
+      preLoaderRoute: typeof AuthenticatedOrganizationSettingsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/onboarding': {
+      id: '/_authenticated/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof AuthenticatedOnboardingRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/dashboard': {
@@ -198,6 +269,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/access-denied': {
+      id: '/_authenticated/access-denied'
+      path: '/access-denied'
+      fullPath: '/access-denied'
+      preLoaderRoute: typeof AuthenticatedAccessDeniedRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/about': {
@@ -247,8 +325,12 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAboutRoute: typeof AuthenticatedAboutRoute
+  AuthenticatedAccessDeniedRoute: typeof AuthenticatedAccessDeniedRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
-  AuthenticatedPipelineRoute: typeof AuthenticatedPipelineRoute
+  AuthenticatedOnboardingRoute: typeof AuthenticatedOnboardingRoute
+  AuthenticatedOrganizationSettingsRoute: typeof AuthenticatedOrganizationSettingsRoute
+  AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
+  AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
   AuthenticatedEditionsIdRoute: typeof AuthenticatedEditionsIdRoute
   AuthenticatedPublishedIdRoute: typeof AuthenticatedPublishedIdRoute
   AuthenticatedReviewIdRoute: typeof AuthenticatedReviewIdRoute
@@ -258,8 +340,13 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAboutRoute: AuthenticatedAboutRoute,
+  AuthenticatedAccessDeniedRoute: AuthenticatedAccessDeniedRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
-  AuthenticatedPipelineRoute: AuthenticatedPipelineRoute,
+  AuthenticatedOnboardingRoute: AuthenticatedOnboardingRoute,
+  AuthenticatedOrganizationSettingsRoute:
+    AuthenticatedOrganizationSettingsRoute,
+  AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
+  AuthenticatedTeamRoute: AuthenticatedTeamRoute,
   AuthenticatedEditionsIdRoute: AuthenticatedEditionsIdRoute,
   AuthenticatedPublishedIdRoute: AuthenticatedPublishedIdRoute,
   AuthenticatedReviewIdRoute: AuthenticatedReviewIdRoute,
