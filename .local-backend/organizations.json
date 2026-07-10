@@ -1,14 +1,108 @@
 {
-  "organizations": {},
-  "members": {},
-  "invitations": {},
+  "organizations": {
+    "local_1ebe3681-2cdc-4dc9-991b-2bb41c8385c5": {
+      "id": "local_1ebe3681-2cdc-4dc9-991b-2bb41c8385c5",
+      "name": "prajavani",
+      "logo_url": "https://yeekox.com/wp-content/uploads/2021/11/prajavani.png",
+      "description": ",.........",
+      "email": null,
+      "phone_number": null,
+      "address": null,
+      "organization_type": null,
+      "created_by": "866ab315-312e-4275-b6f9-42fab2a1459e",
+      "created_at": "2026-07-10T13:51:46.628Z",
+      "updated_at": "2026-07-10T13:51:46.628Z"
+    }
+  },
+  "members": {
+    "local_member_2150da0c-f03d-44a4-a585-d2628bb05fdc": {
+      "id": "local_member_2150da0c-f03d-44a4-a585-d2628bb05fdc",
+      "organization_id": "local_1ebe3681-2cdc-4dc9-991b-2bb41c8385c5",
+      "user_id": "866ab315-312e-4275-b6f9-42fab2a1459e",
+      "role": "owner",
+      "status": "active",
+      "invited_by": "866ab315-312e-4275-b6f9-42fab2a1459e",
+      "joined_at": "2026-07-10T13:51:46.628Z",
+      "created_at": "2026-07-10T13:51:46.628Z",
+      "updated_at": "2026-07-10T13:51:46.628Z"
+    },
+    "local_member_f0a26985-ad9c-4f07-b845-c2f90df4e184": {
+      "id": "local_member_f0a26985-ad9c-4f07-b845-c2f90df4e184",
+      "organization_id": "local_1ebe3681-2cdc-4dc9-991b-2bb41c8385c5",
+      "user_id": "5e1ae35a-c084-4a89-b333-c8eb843af791",
+      "role": "editor",
+      "status": "active",
+      "invited_by": "866ab315-312e-4275-b6f9-42fab2a1459e",
+      "joined_at": "2026-07-10T13:56:01.120Z",
+      "created_at": "2026-07-10T13:56:01.120Z",
+      "updated_at": "2026-07-10T13:56:01.120Z"
+    }
+  },
+  "invitations": {
+    "local_invitation_2e581111-2852-4753-af1b-6b4effcfbe65": {
+      "id": "local_invitation_2e581111-2852-4753-af1b-6b4effcfbe65",
+      "organization_id": "local_1ebe3681-2cdc-4dc9-991b-2bb41c8385c5",
+      "email": "vikaspapti033@gmail.com",
+      "role": "editor",
+      "status": "accepted",
+      "invited_by": "866ab315-312e-4275-b6f9-42fab2a1459e",
+      "invitee_user_id": "5e1ae35a-c084-4a89-b333-c8eb843af791",
+      "created_at": "2026-07-10T13:55:45.319Z",
+      "responded_at": "2026-07-10T13:56:01.120Z"
+    }
+  },
   "profiles": {
     "5e1ae35a-c084-4a89-b333-c8eb843af791": {
       "id": "5e1ae35a-c084-4a89-b333-c8eb843af791",
       "email": "vikaspapti033@gmail.com",
       "full_name": "Vikas S P",
       "updated_at": "2026-07-10T09:37:32.322Z"
+    },
+    "866ab315-312e-4275-b6f9-42fab2a1459e": {
+      "id": "866ab315-312e-4275-b6f9-42fab2a1459e",
+      "email": "soukirgaming@gmail.com",
+      "full_name": "vikas",
+      "updated_at": "2026-07-10T13:48:41.863Z"
     }
   },
-  "audit_logs": []
+  "audit_logs": [
+    {
+      "id": "local_audit_53d55758-bd09-4081-8387-5d793513fe25",
+      "organization_id": "local_1ebe3681-2cdc-4dc9-991b-2bb41c8385c5",
+      "actor_id": "866ab315-312e-4275-b6f9-42fab2a1459e",
+      "action": "organization.created",
+      "target_table": "organizations",
+      "target_id": "local_1ebe3681-2cdc-4dc9-991b-2bb41c8385c5",
+      "metadata": {
+        "name": "prajavani"
+      },
+      "created_at": "2026-07-10T13:51:46.628Z"
+    },
+    {
+      "id": "local_audit_497c477f-0681-42fc-bcef-0320a641058a",
+      "organization_id": "local_1ebe3681-2cdc-4dc9-991b-2bb41c8385c5",
+      "actor_id": "866ab315-312e-4275-b6f9-42fab2a1459e",
+      "action": "invitation.created",
+      "target_table": "organization_invitations",
+      "target_id": "local_invitation_2e581111-2852-4753-af1b-6b4effcfbe65",
+      "metadata": {
+        "email": "vikaspapti033@gmail.com",
+        "role": "editor",
+        "source": "local"
+      },
+      "created_at": "2026-07-10T13:55:45.320Z"
+    },
+    {
+      "id": "local_audit_ba796811-1df3-46f9-a703-79101ee48729",
+      "organization_id": "local_1ebe3681-2cdc-4dc9-991b-2bb41c8385c5",
+      "actor_id": "5e1ae35a-c084-4a89-b333-c8eb843af791",
+      "action": "invitation.accepted",
+      "target_table": "organization_invitations",
+      "target_id": "local_invitation_2e581111-2852-4753-af1b-6b4effcfbe65",
+      "metadata": {
+        "role": "editor"
+      },
+      "created_at": "2026-07-10T13:56:01.120Z"
+    }
+  ]
 }

@@ -462,8 +462,6 @@ export const sendOrganizationInvitationBackend = createServerFn({ method: "POST"
     }
 
     try {
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      const admin = supabaseAdmin as any;
       const authenticatedEmail = getContextEmail(context);
       if (!authenticatedEmail) {
         return { ok: false, error: "Authenticated email is required to send invitations." };
@@ -477,9 +475,10 @@ export const sendOrganizationInvitationBackend = createServerFn({ method: "POST"
           "Server-side invitation send; avoids browser RLS/schema-cache failures and stores in Supabase.",
       });
 
-      const organizationId = data.organizationId;
       const store = await readStore();
       const profileChanged = upsertProfileFromContext(store, context);
+      const defaultOrganization = getDefaultOrganizationContext(store, context.userId);
+      const organizationId = data.organizationId || defaultOrganization?.organization.id || "";
       const localOrganization = organizationId ? store.organizations[organizationId] : null;
       const localMember = localOrganization
         ? getActiveMember(store, organizationId, context.userId)
@@ -497,15 +496,64 @@ export const sendOrganizationInvitationBackend = createServerFn({ method: "POST"
         return { ok: false, error: "You cannot invite your own account." };
       }
 
-      if (
-        localOrganization &&
-        isEmailAlreadyActiveMember(store, organizationId, data.inviteEmail)
-      ) {
+      if (localOrganization && isEmailAlreadyActiveMember(store, organizationId, data.inviteEmail)) {
         return {
           ok: false,
           error: "This email address is already a member of the organization.",
         };
       }
+
+      if (!hasSupabaseAdminCredentials()) {
+        if (!localOrganization) {
+          return {
+            ok: false,
+            error:
+              "Supabase service role key is required for database-only organizations. Configure SUPABASE_SERVICE_ROLE_KEY in Lovable Cloud.",
+          };
+        }
+
+        const existing = Object.values(store.invitations).find(
+          (invitation) =>
+            invitation.organization_id === organizationId &&
+            invitation.email === data.inviteEmail &&
+            invitation.status === "pending",
+        );
+        if (existing) {
+          if (profileChanged) await writeStore(store);
+          return { ok: true, invitationId: existing.id, organizationId };
+        }
+
+        const matchingProfile = Object.values(store.profiles).find(
+          (profile) => profile.email === data.inviteEmail,
+        );
+        const now = new Date().toISOString();
+        const invitation: LocalInvitation = {
+          id: `local_invitation_${crypto.randomUUID()}`,
+          organization_id: organizationId,
+          email: data.inviteEmail,
+          role: data.role,
+          status: "pending",
+          invited_by: context.userId,
+          invitee_user_id: matchingProfile?.id ?? null,
+          created_at: now,
+          responded_at: null,
+        };
+
+        store.invitations[invitation.id] = invitation;
+        appendAuditLog(store, {
+          organizationId,
+          actorId: context.userId,
+          action: "invitation.created",
+          targetTable: "organization_invitations",
+          targetId: invitation.id,
+          metadata: { email: data.inviteEmail, role: data.role, source: "local" },
+        });
+        await writeStore(store);
+        return { ok: true, invitationId: invitation.id, organizationId };
+      }
+
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const admin = supabaseAdmin as any;
 
       await ensureDatabaseProfile(admin, context);
       const databaseProfile = await getProfileByEmail(admin, data.inviteEmail);
@@ -1194,6 +1242,10 @@ function getErrorMessage(error: unknown, fallback: string) {
     return error.message;
   }
   return fallback;
+}
+
+function hasSupabaseAdminCredentials() {
+  return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
 function isMissingDatabaseObjectError(error: unknown) {
