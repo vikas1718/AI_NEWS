@@ -14,6 +14,7 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedPipelineRouteImport } from './routes/_authenticated/pipeline'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedAiGenerateLayoutRouteImport } from './routes/_authenticated/ai-generate-layout'
 import { Route as AuthenticatedAboutRouteImport } from './routes/_authenticated/about'
 import { Route as AuthenticatedReviewIndexRouteImport } from './routes/_authenticated/review/index'
 import { Route as AuthenticatedEditionsIndexRouteImport } from './routes/_authenticated/editions/index'
@@ -45,6 +46,12 @@ const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedAiGenerateLayoutRoute =
+  AuthenticatedAiGenerateLayoutRouteImport.update({
+    id: '/ai-generate-layout',
+    path: '/ai-generate-layout',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedAboutRoute = AuthenticatedAboutRouteImport.update({
   id: '/about',
   path: '/about',
@@ -83,6 +90,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/about': typeof AuthenticatedAboutRoute
+  '/ai-generate-layout': typeof AuthenticatedAiGenerateLayoutRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/pipeline': typeof AuthenticatedPipelineRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
@@ -95,6 +103,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/about': typeof AuthenticatedAboutRoute
+  '/ai-generate-layout': typeof AuthenticatedAiGenerateLayoutRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/pipeline': typeof AuthenticatedPipelineRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
@@ -109,6 +118,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/about': typeof AuthenticatedAboutRoute
+  '/_authenticated/ai-generate-layout': typeof AuthenticatedAiGenerateLayoutRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/pipeline': typeof AuthenticatedPipelineRoute
   '/_authenticated/editions/$id': typeof AuthenticatedEditionsIdRoute
@@ -123,6 +133,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/about'
+    | '/ai-generate-layout'
     | '/dashboard'
     | '/pipeline'
     | '/editions/$id'
@@ -135,6 +146,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/about'
+    | '/ai-generate-layout'
     | '/dashboard'
     | '/pipeline'
     | '/editions/$id'
@@ -148,6 +160,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/about'
+    | '/_authenticated/ai-generate-layout'
     | '/_authenticated/dashboard'
     | '/_authenticated/pipeline'
     | '/_authenticated/editions/$id'
@@ -200,6 +213,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/ai-generate-layout': {
+      id: '/_authenticated/ai-generate-layout'
+      path: '/ai-generate-layout'
+      fullPath: '/ai-generate-layout'
+      preLoaderRoute: typeof AuthenticatedAiGenerateLayoutRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/about': {
       id: '/_authenticated/about'
       path: '/about'
@@ -247,6 +267,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAboutRoute: typeof AuthenticatedAboutRoute
+  AuthenticatedAiGenerateLayoutRoute: typeof AuthenticatedAiGenerateLayoutRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedPipelineRoute: typeof AuthenticatedPipelineRoute
   AuthenticatedEditionsIdRoute: typeof AuthenticatedEditionsIdRoute
@@ -258,6 +279,7 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAboutRoute: AuthenticatedAboutRoute,
+  AuthenticatedAiGenerateLayoutRoute: AuthenticatedAiGenerateLayoutRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedPipelineRoute: AuthenticatedPipelineRoute,
   AuthenticatedEditionsIdRoute: AuthenticatedEditionsIdRoute,

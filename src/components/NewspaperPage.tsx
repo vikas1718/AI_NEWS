@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { Article, Newspaper } from "@/lib/api";
+import { newspaperArticleBackgroundStyle } from "@/components/NewspaperArticleBlock";
 
 interface Props {
   newspaper: Newspaper;
@@ -20,17 +21,6 @@ const PRINT_PAGE_PADDING = "28px 32px";
 const ARTICLES_PER_PAGE = 4;
 const LEAD_TEXT_LIMIT = 720;
 const STORY_TEXT_LIMIT = 220;
-
-const ARTICLE_BACKGROUND_COLORS = new Set([
-  "#fff4bf",
-  "#dbeafe",
-  "#dcfce7",
-  "#ffedd5",
-  "#ffe4e6",
-  "#e5e7eb",
-]);
-
-const BACKGROUND_COLOR_FALLBACK_KEY = "article_background_color";
 
 function articleBody(article: Article) {
   return article.corrected_text ?? article.ocr_text ?? article.raw_text ?? article.summary ?? "";
@@ -93,8 +83,11 @@ export function paginatePrintArticles(articles: Article[]) {
         id: `${article.id}-print-${chunkIndex}`,
         page_number: page,
         position: isLeadSlot ? "top" : article.position,
-        headline_size:
-          isLeadSlot ? "big" : article.headline_size === "big" ? "medium" : article.headline_size,
+        headline_size: isLeadSlot
+          ? "big"
+          : article.headline_size === "big"
+            ? "medium"
+            : article.headline_size,
         image_url: continued ? null : article.image_url,
         summary: continued ? null : article.summary,
         print_id: article.id,
@@ -138,40 +131,33 @@ function PrajavaniMasthead() {
           ವಾಣಿ
         </span>
       </div>
-      <div className="-mt-1 font-kannada text-[10px] font-semibold leading-none tracking-wide">
+      <div className="mt-2 font-kannada text-[10px] font-semibold leading-none tracking-wide">
         ಆತ್ಮ ವಿಶ್ವಾಸದ ಕನ್ನಡ ದಿನಪತ್ರಿಕೆ
       </div>
     </div>
   );
 }
 
-function normalizeArticleBackgroundColor(value: unknown) {
-  if (typeof value === "string") {
-    return ARTICLE_BACKGROUND_COLORS.has(value) ? value : "";
-  }
-  if (value && typeof value === "object" && "value" in value) {
-    return normalizeArticleBackgroundColor((value as { value?: unknown }).value);
-  }
-  return "";
-}
-
 function articleBackgroundStyle(article: Article): CSSProperties | undefined {
-  const workflowStatus = article.workflow_status as Record<string, unknown> | null | undefined;
-  const backgroundColor =
-    normalizeArticleBackgroundColor(article.background_color) ||
-    normalizeArticleBackgroundColor(workflowStatus?.[BACKGROUND_COLOR_FALLBACK_KEY]);
-
-  if (!backgroundColor) return undefined;
+  const backgroundStyle = newspaperArticleBackgroundStyle(article);
+  if (!backgroundStyle) return undefined;
 
   return {
-    backgroundColor,
+    ...backgroundStyle,
     padding: "8px",
     borderRadius: 2,
   };
 }
 
 function articleText(article: PrintArticle) {
-  return article.print_text ?? article.corrected_text ?? article.summary ?? article.ocr_text ?? article.raw_text ?? "";
+  return (
+    article.print_text ??
+    article.corrected_text ??
+    article.summary ??
+    article.ocr_text ??
+    article.raw_text ??
+    ""
+  );
 }
 
 export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: Props) {
@@ -219,10 +205,7 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
         )}
 
         {lead && (
-          <div
-            className="mb-3 shrink-0 border-b border-newsprint-rule pb-2"
-            style={articleBackgroundStyle(lead)}
-          >
+          <div className="mb-3 shrink-0 pb-2" style={articleBackgroundStyle(lead)}>
             <div className="text-[10px] font-bold uppercase tracking-widest text-primary">
               {lead.continued ? "Continued" : lead.category}
             </div>
@@ -237,11 +220,7 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
             <div className="mt-2 grid grid-cols-3 gap-3">
               {lead.image_url && (
                 <div className="col-span-3">
-                  <img
-                    src={lead.image_url}
-                    alt=""
-                    className="h-36 w-full object-cover"
-                  />
+                  <img src={lead.image_url} alt="" className="h-36 w-full object-cover" />
                   <div className="text-[9px] italic opacity-70">Photo caption</div>
                 </div>
               )}
@@ -261,7 +240,7 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
             return (
               <div
                 key={article.id}
-                className="min-h-0 overflow-hidden border-t border-newsprint-rule pt-2"
+                className="min-h-0 overflow-hidden pt-2"
                 style={articleBackgroundStyle(article)}
               >
                 <div className="text-[9px] font-bold uppercase tracking-widest text-primary">
@@ -273,11 +252,7 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
                   {article.headline}
                 </h3>
                 {article.image_url && (
-                  <img
-                    src={article.image_url}
-                    alt=""
-                    className="mt-1.5 h-20 w-full object-cover"
-                  />
+                  <img src={article.image_url} alt="" className="mt-1.5 h-20 w-full object-cover" />
                 )}
                 <p
                   className={`mt-1 font-kannada ${bodyTextClass(text)}`}

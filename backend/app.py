@@ -6,6 +6,7 @@ import mimetypes
 import os
 import random
 import sys
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +28,9 @@ VALID_CATEGORIES = {
     "Business",
     "Other",
 }
+DEFAULT_TARGET_WORD_LIMIT = 250
+MIN_TARGET_WORD_LIMIT = 80
+MAX_TARGET_WORD_LIMIT = 1200
 
 MOCK_KANNADA = [
     "\u0cac\u0cc6\u0c82\u0c97\u0cb3\u0cc2\u0cb0\u0cc1: \u0cb0\u0cbe\u0c9c\u0ccd\u0caf\u0ca6\u0cb2\u0ccd\u0cb2\u0cbf \u0c87\u0c82\u0ca6\u0cc1 \u0cad\u0cbe\u0cb0\u0cc0 \u0cae\u0cb3\u0cc6 \u0cb8\u0cc1\u0cb0\u0cbf\u0caf\u0cc1\u0ca4\u0ccd\u0ca4\u0cbf\u0ca6\u0cc6.",
@@ -57,6 +61,71 @@ TRANSLATION_RETRY_PROMPT = SYSTEM_PROMPT + """
 Critical validation rule:
 The previous output was rejected because the article body was not in Kannada script.
 Return corrected_text, headline, and summary in Kannada script now. Do not copy the English input."""
+
+
+def normalize_target_word_limit(value: Any) -> int:
+    try:
+        numeric = int(round(float(value)))
+    except (TypeError, ValueError):
+        return DEFAULT_TARGET_WORD_LIMIT
+    return max(MIN_TARGET_WORD_LIMIT, min(MAX_TARGET_WORD_LIMIT, numeric))
+
+
+def count_words(text: str) -> int:
+    return len([word for word in text.strip().split() if word])
+
+
+def expansion_floor(source_word_count: int, target_word_limit: int) -> int:
+    return min(
+        int(target_word_limit * 0.75),
+        max(source_word_count + 60, int(source_word_count * 2.5 + 0.999)),
+    )
+
+
+def should_retry_expansion(source_text: str, corrected_text: str, target_word_limit: int) -> bool:
+    source_word_count = count_words(source_text)
+    corrected_word_count = count_words(corrected_text)
+    if source_word_count >= target_word_limit * 0.8:
+        return False
+    return corrected_word_count < expansion_floor(source_word_count, target_word_limit)
+
+
+def build_article_system_prompt(target_word_limit: int, retry_reason: str | None = None) -> str:
+    if retry_reason == "too_long":
+        retry_rule = "\n- The previous answer exceeded the target. Rewrite corrected_text again under the limit while keeping the same strict JSON format."
+    elif retry_reason == "too_short":
+        retry_rule = "\n- The previous answer was too close to the source and did not apply the length optimizer. Expand corrected_text more substantially while using only source facts."
+    else:
+        retry_rule = ""
+
+    return f"""{SYSTEM_PROMPT}
+
+Article length optimizer:
+- Target word limit: {target_word_limit} words. corrected_text must be at or under this limit.
+- If the source article is shorter than the target, expand it toward {int(target_word_limit * 0.85)}-{target_word_limit} words when the source has enough factual material.
+- For short inputs, do not simply translate or repeat the original. Build a complete professional newspaper article with a lead, supporting context from the supplied facts, and a clean close.
+- If the source article is longer than the target, summarize it while preserving key facts and the original meaning.
+- If the source article is already close to the target, improve grammar, clarity, readability, and newspaper style without unnecessary expansion.
+- Do not hallucinate or add new facts, names, dates, places, quotes, statistics, allegations, or background context not present in the source.
+- You may elaborate wording, transitions, attribution phrasing, and article structure, but every factual claim must be traceable to the source.
+- Preserve factual details, attribution, and meaning. Staying under the word limit is mandatory.{retry_rule}"""
+
+
+def build_article_user_prompt(text: str, target_word_limit: int) -> str:
+    source_word_count = count_words(text)
+    if source_word_count < target_word_limit * 0.8:
+        action = "expand the article toward the target without adding facts"
+    elif source_word_count > target_word_limit:
+        action = "summarize the article under the target"
+    else:
+        action = "polish the article and keep it under the target"
+
+    return f"""Source word count: {source_word_count}
+Target word limit: {target_word_limit}
+Required action: {action}
+
+SOURCE ARTICLE:
+{text}"""
 
 IMAGE_BRIEF_PROMPT = """You are a photo editor for a Kannada newspaper in Karnataka, India.
 Convert the article details into one accurate English image-generation prompt.
@@ -102,6 +171,11 @@ def json_response(handler: BaseHTTPRequestHandler, payload: Any, status: int = 2
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def log_handler_error(name: str, exc: BaseException) -> None:
+    print(f"[{name}] {type(exc).__name__}: {exc}", file=sys.stderr)
+    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
 
 
 def read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -150,6 +224,29 @@ def primary_text_model() -> str:
     return env_value("OPENAI_MODEL_PRIMARY") or env_value("OPENAI_TEXT_MODEL") or "gpt-4o-mini"
 
 
+def openai_text_timeout() -> int:
+    value = env_value("OPENAI_TEXT_TIMEOUT_SECONDS") or env_value("OPENAI_TIMEOUT_SECONDS")
+    try:
+        return max(60, min(300, int(value or "180")))
+    except ValueError:
+        return 180
+
+
+def ai_connection_error_message(exc: BaseException) -> str:
+    if isinstance(exc, TimeoutError):
+        return (
+            "ai_failed: OpenAI text conversion timed out. Try a smaller target word limit, "
+            "shorter source text, or increase OPENAI_TEXT_TIMEOUT_SECONDS."
+        )
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, TimeoutError):
+        return (
+            "ai_failed: OpenAI text conversion timed out. Try a smaller target word limit, "
+            "shorter source text, or increase OPENAI_TEXT_TIMEOUT_SECONDS."
+        )
+    return f"ai_failed: OpenAI/network connection failed: {exc}"
+
+
 def count_kannada_chars(text: str) -> int:
     return sum(1 for char in text if "\u0c80" <= char <= "\u0cff")
 
@@ -188,7 +285,7 @@ def call_openai_chat(text: str, system_prompt: str = SYSTEM_PROMPT) -> dict[str,
             method="POST",
         )
 
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=openai_text_timeout()) as response:
             data = json.loads(response.read().decode("utf-8"))
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         return json.loads(content)
@@ -212,7 +309,7 @@ def call_openai_chat(text: str, system_prompt: str = SYSTEM_PROMPT) -> dict[str,
         method="POST",
     )
 
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=openai_text_timeout()) as response:
         data = json.loads(response.read().decode("utf-8"))
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
     return json.loads(content)
@@ -576,10 +673,12 @@ def handle_process_article(payload: dict[str, Any]) -> dict[str, Any]:
     if not text:
         raise ValueError("text required")
 
+    target_word_limit = normalize_target_word_limit(payload.get("targetWordLimit"))
     requires_translation = needs_kannada_translation(text)
+    article_prompt = build_article_user_prompt(text, target_word_limit)
 
     try:
-        result = call_openai_chat(text)
+        result = call_openai_chat(article_prompt, build_article_system_prompt(target_word_limit))
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
             raise RuntimeError("rate_limited") from exc
@@ -588,7 +687,7 @@ def handle_process_article(payload: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(f"ai_failed: {exc.read().decode('utf-8', errors='replace')}") from exc
     except (OSError, urllib.error.URLError) as exc:
         if requires_translation:
-            raise RuntimeError("ai_failed: Kannada conversion needs OpenAI/network access. Please check the backend connection and try again.") from exc
+            raise RuntimeError(ai_connection_error_message(exc)) from exc
         result = None
 
     if result is None and requires_translation:
@@ -604,9 +703,9 @@ def handle_process_article(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
     normalized = normalize_article_result(result, text)
-    if requires_translation and not has_kannada_text(normalized["corrected_text"]):
+    if count_words(normalized["corrected_text"]) > target_word_limit:
         try:
-            retry_result = call_openai_chat(text, TRANSLATION_RETRY_PROMPT)
+            retry_result = call_openai_chat(article_prompt, build_article_system_prompt(target_word_limit, "too_long"))
             if retry_result is not None:
                 normalized = normalize_article_result(retry_result, text)
         except urllib.error.HTTPError as exc:
@@ -616,7 +715,55 @@ def handle_process_article(payload: dict[str, Any]) -> dict[str, Any]:
                 raise RuntimeError("credits_exhausted") from exc
             raise RuntimeError(f"ai_failed: {exc.read().decode('utf-8', errors='replace')}") from exc
         except (OSError, urllib.error.URLError) as exc:
-            raise RuntimeError("ai_failed: Kannada conversion needs OpenAI/network access. Please check the backend connection and try again.") from exc
+            if requires_translation:
+                raise RuntimeError(ai_connection_error_message(exc)) from exc
+    elif should_retry_expansion(text, normalized["corrected_text"], target_word_limit):
+        try:
+            retry_result = call_openai_chat(article_prompt, build_article_system_prompt(target_word_limit, "too_short"))
+            if retry_result is not None:
+                normalized = normalize_article_result(retry_result, text)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                raise RuntimeError("rate_limited") from exc
+            if exc.code == 402:
+                raise RuntimeError("credits_exhausted") from exc
+            raise RuntimeError(f"ai_failed: {exc.read().decode('utf-8', errors='replace')}") from exc
+        except (OSError, urllib.error.URLError) as exc:
+            if requires_translation:
+                raise RuntimeError(ai_connection_error_message(exc)) from exc
+
+    if requires_translation and not has_kannada_text(normalized["corrected_text"]):
+        try:
+            retry_result = call_openai_chat(
+                article_prompt,
+                build_article_system_prompt(target_word_limit, "too_short")
+                + "\n\nCritical validation rule:\nThe previous output was rejected because the article body was not in Kannada script. Return corrected_text, headline, and summary in Kannada script now. Do not copy the English input.",
+            )
+            if retry_result is not None:
+                normalized = normalize_article_result(retry_result, text)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                raise RuntimeError("rate_limited") from exc
+            if exc.code == 402:
+                raise RuntimeError("credits_exhausted") from exc
+            raise RuntimeError(f"ai_failed: {exc.read().decode('utf-8', errors='replace')}") from exc
+        except (OSError, urllib.error.URLError) as exc:
+            raise RuntimeError(ai_connection_error_message(exc)) from exc
+
+    if count_words(normalized["corrected_text"]) > target_word_limit:
+        try:
+            retry_result = call_openai_chat(article_prompt, build_article_system_prompt(target_word_limit, "too_long"))
+            if retry_result is not None:
+                normalized = normalize_article_result(retry_result, text)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                raise RuntimeError("rate_limited") from exc
+            if exc.code == 402:
+                raise RuntimeError("credits_exhausted") from exc
+            raise RuntimeError(f"ai_failed: {exc.read().decode('utf-8', errors='replace')}") from exc
+        except (OSError, urllib.error.URLError) as exc:
+            if requires_translation:
+                raise RuntimeError(ai_connection_error_message(exc)) from exc
 
     if requires_translation and not has_kannada_text(normalized["corrected_text"]):
         raise RuntimeError("translation_failed: AI returned non-Kannada text. Please run the pipeline again.")
@@ -735,8 +882,10 @@ class BackendHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             json_response(self, {"error": "invalid_json"}, 400)
         except ValueError as exc:
+            log_handler_error(name, exc)
             json_response(self, {"error": str(exc)}, 400)
         except RuntimeError as exc:
+            log_handler_error(name, exc)
             message = str(exc)
             status = 500
             if message == "rate_limited":
@@ -745,6 +894,7 @@ class BackendHandler(BaseHTTPRequestHandler):
                 status = 402
             json_response(self, {"error": message}, status)
         except Exception as exc:
+            log_handler_error(name, exc)
             json_response(self, {"error": str(exc)}, 500)
 
     def log_message(self, fmt: str, *args: Any) -> None:

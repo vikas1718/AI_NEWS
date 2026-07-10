@@ -2,11 +2,21 @@ import { createFileRoute, Link, useRouteContext } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
-import { ArrowLeft, ChevronLeft, ChevronRight, Layout as LayoutIcon, Loader2, Send } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Layout as LayoutIcon,
+  Loader2,
+  Send,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AddArticleFlow } from "@/components/AddArticleFlow";
 import { ArticleCard } from "@/components/ArticleCard";
-import { NewspaperLayoutEditor } from "@/components/NewspaperLayoutEditor";
+import {
+  createGeneratedEditorLayout,
+  NewspaperLayoutEditor,
+} from "@/components/NewspaperLayoutEditor";
 import { getPrintPageCount, NewspaperPage } from "@/components/NewspaperPage";
 import {
   hasSavedEditorLayout,
@@ -17,7 +27,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { aiFn, type Article, type Newspaper } from "@/lib/api";
+import type { Article, Newspaper } from "@/lib/api";
 
 export const Route = createFileRoute("/_authenticated/editions/$id")({
   component: EditionWorkspace,
@@ -48,7 +58,8 @@ function savedEditorPlacements(layoutJson: unknown): SavedPlacement[] {
 
   const placements: SavedPlacement[] = [];
   for (const [pageNumber, pageState] of Object.entries(layoutJson.pages)) {
-    if (!isRecord(pageState) || !Array.isArray(pageState.slots) || !isRecord(pageState.assignments)) continue;
+    if (!isRecord(pageState) || !Array.isArray(pageState.slots) || !isRecord(pageState.assignments))
+      continue;
 
     for (const slot of pageState.slots) {
       if (!isRecord(slot) || typeof slot.id !== "string") continue;
@@ -111,7 +122,12 @@ function PageTurnPreview({
         totalPages={totalPages}
       />
     ) : (
-      <NewspaperPage newspaper={newspaper} articles={articles} pageNumber={page} totalPages={totalPages} />
+      <NewspaperPage
+        newspaper={newspaper}
+        articles={articles}
+        pageNumber={page}
+        totalPages={totalPages}
+      />
     );
   }
 
@@ -332,7 +348,8 @@ function EditionWorkspace() {
     mutationFn: async () => {
       if (!newspaper) return;
       const ready = articles.filter((article) => article.workflow_status?.ready_for_layout);
-      if (ready.length === 0) throw new Error("Mark image step complete on at least one article first.");
+      if (ready.length === 0)
+        throw new Error("Mark image step complete on at least one article first.");
 
       const { data: savedLayout, error: savedLayoutError } = await supabase
         .from("layouts")
@@ -354,8 +371,14 @@ function EditionWorkspace() {
             .update({
               page_number: placement.pageNumber,
               position: placement.slotKind === "lead" ? "top" : "body",
-              headline_size: placement.slotKind === "lead" ? "big" : placement.slotWidth >= 6 ? "medium" : "small",
-              image_size: placement.slotKind === "image" || placement.slotKind === "lead" ? "large" : "small",
+              headline_size:
+                placement.slotKind === "lead"
+                  ? "big"
+                  : placement.slotWidth >= 6
+                    ? "medium"
+                    : "small",
+              image_size:
+                placement.slotKind === "image" || placement.slotKind === "lead" ? "large" : "small",
               column_count: Math.min(3, Math.max(1, Math.floor(placement.slotWidth / 4))),
               priority_score: priority,
             })
@@ -385,20 +408,28 @@ function EditionWorkspace() {
         return "saved";
       }
 
-      const { layout } = await aiFn.layout(ready, newspaper.number_of_pages);
-      for (const item of layout) {
-        await supabase
+      const layoutJson = createGeneratedEditorLayout(ready, newspaper.number_of_pages);
+      const generatedPlacements = savedEditorPlacements(layoutJson);
+      let priority = 100;
+
+      for (const placement of generatedPlacements) {
+        const { error } = await supabase
           .from("articles")
           .update({
-            page_number: item.page_number,
-            position: item.position,
-            headline_size: item.headline_size,
-            image_size: item.image_size,
-            column_count: item.column_count,
+            page_number: placement.pageNumber,
+            position: placement.slotKind === "lead" ? "top" : "body",
+            headline_size:
+              placement.slotKind === "lead" ? "big" : placement.slotWidth >= 6 ? "medium" : "small",
+            image_size:
+              placement.slotKind === "image" || placement.slotKind === "lead" ? "large" : "small",
+            column_count: Math.min(3, Math.max(1, Math.floor(placement.slotWidth / 4))),
+            priority_score: priority,
           })
-          .eq("id", item.article_id);
+          .eq("id", placement.articleId);
+        if (error) throw error;
+        priority -= 1;
       }
-      await supabase.from("layouts").insert({ newspaper_id: id, layout_json: layout });
+      await supabase.from("layouts").insert({ newspaper_id: id, layout_json: layoutJson });
       await supabase.from("newspapers").update({ status: "pending_layout" }).eq("id", id);
       return "generated";
     },
@@ -408,19 +439,24 @@ function EditionWorkspace() {
       toast.success(source === "saved" ? "Saved editor layout loaded" : "Layout generated");
       setTab("layout");
     },
-    onError: (error: unknown) => toast.error(error instanceof Error ? error.message : "Layout generation failed"),
+    onError: (error: unknown) =>
+      toast.error(error instanceof Error ? error.message : "Layout generation failed"),
   });
 
   const sendChief = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from("newspapers").update({ status: "pending_approval" }).eq("id", id);
+      const { error } = await supabase
+        .from("newspapers")
+        .update({ status: "pending_approval" })
+        .eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries();
       toast.success("Sent to Chief Editor for review");
     },
-    onError: (error: unknown) => toast.error(error instanceof Error ? error.message : "Could not send for review"),
+    onError: (error: unknown) =>
+      toast.error(error instanceof Error ? error.message : "Could not send for review"),
   });
 
   if (!newspaper) return <div className="text-sm text-muted-foreground">Loading...</div>;
@@ -431,8 +467,11 @@ function EditionWorkspace() {
   const totalPages = hasSavedPreview
     ? savedPreviewPages.length
     : getPrintPageCount(articles, newspaper.number_of_pages);
-  const pages = hasSavedPreview ? savedPreviewPages : Array.from({ length: totalPages }, (_, index) => index + 1);
-  const canEdit = role === "editor" && !["pending_approval", "approved", "published"].includes(newspaper.status);
+  const pages = hasSavedPreview
+    ? savedPreviewPages
+    : Array.from({ length: totalPages }, (_, index) => index + 1);
+  const canEdit =
+    role === "editor" && !["pending_approval", "approved", "published"].includes(newspaper.status);
 
   return (
     <div className="space-y-6">
@@ -456,7 +495,11 @@ function EditionWorkspace() {
           </div>
           <div className="flex gap-2">
             {canEdit && (
-              <Button variant="outline" onClick={() => genLayout.mutate()} disabled={genLayout.isPending}>
+              <Button
+                variant="outline"
+                onClick={() => genLayout.mutate()}
+                disabled={genLayout.isPending}
+              >
                 {genLayout.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
@@ -484,33 +527,51 @@ function EditionWorkspace() {
         </div>
       </div>
 
-      <Tabs value={tab} onValueChange={(value) => setTab(value as "articles" | "layout" | "preview")}>
+      <Tabs
+        value={tab}
+        onValueChange={(value) => setTab(value as "articles" | "layout" | "preview")}
+      >
         <TabsList>
           <TabsTrigger value="articles">Articles ({articles.length})</TabsTrigger>
           <TabsTrigger value="layout">Layout editor</TabsTrigger>
           <TabsTrigger value="preview">Page preview</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="articles" className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <TabsContent value="articles" className="mt-4 space-y-6">
+          {canEdit ? (
+            <AddArticleFlow newspaperId={id} />
+          ) : (
+            <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+              Read-only while edition is under review.
+            </div>
+          )}
           <div className="space-y-3">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h2 className="text-lg font-semibold">Article queue</h2>
+                <p className="text-sm text-muted-foreground">
+                  {articles.length} articles in this edition
+                </p>
+              </div>
+            </div>
             {articles.length === 0 && (
               <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-                No articles yet. Use the panel on the right to add your first article.
+                No articles yet. Add your first article above.
               </div>
             )}
             {articles.map((article) => (
               <ArticleCard key={article.id} article={article} editable={canEdit} />
             ))}
           </div>
-          {canEdit ? (
-            <AddArticleFlow newspaperId={id} />
-          ) : (
-            <div className="text-sm text-muted-foreground">Read-only while edition is under review.</div>
-          )}
         </TabsContent>
 
         <TabsContent value="layout" className="mt-4">
-          <NewspaperLayoutEditor articles={articles} pages={pages} newspaperId={id} canEdit={canEdit} />
+          <NewspaperLayoutEditor
+            articles={articles}
+            pages={pages}
+            newspaperId={id}
+            canEdit={canEdit}
+          />
         </TabsContent>
 
         <TabsContent value="preview" className="mt-4 space-y-6">

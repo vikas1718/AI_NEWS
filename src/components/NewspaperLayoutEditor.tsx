@@ -33,17 +33,25 @@ import {
   Type,
   Undo2,
   Unlock,
+  Wand2,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Article } from "@/lib/api";
+import {
+  NewspaperArticleBlockContent,
+  getNewspaperArticleFit,
+  newspaperArticleText,
+  normalizeNewspaperImagePlacement,
+  normalizeNewspaperTextTuning,
+  optimizeNewspaperImagePlacement,
+} from "@/components/NewspaperArticleBlock";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
@@ -136,6 +144,8 @@ const MIN_IMAGE_WIDTH_PCT = 28;
 const MAX_IMAGE_WIDTH_PCT = 100;
 const MIN_TEXT_SCALE = 80;
 const MAX_TEXT_SCALE = 130;
+const AUTO_FIT_TEXT_SCALE_LIMIT = 125;
+const AUTO_FIT_TARGET_FILL = 0.78;
 const FRONT_PAGE_HEADER_AD_SLOT_ID = "front_page_header_left_ad";
 const FRONT_PAGE_HEADER_QUOTE_SLOT_ID = "front_page_header_quote";
 const DEFAULT_HEADER_QUOTE = "ದಿನದ ಚಿಂತನೆ / Quote";
@@ -332,24 +342,65 @@ const TEMPLATE_DEFS: LayoutTemplateDef[] = [
 ];
 
 function articleText(article?: Article) {
-  if (!article) return "";
-  return article.corrected_text ?? article.ocr_text ?? article.raw_text ?? article.summary ?? "";
-}
-
-function articleParagraphs(article?: Article) {
-  const text = articleText(article).trim();
-  if (!text) return [];
-  return text
-    .split(/\n{2,}|\r\n{2,}/)
-    .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+  return newspaperArticleText(article);
 }
 
 function cloneSlots(slots: LayoutSlot[]) {
   return slots.map((slot) => ({ ...slot }));
 }
 
-const RIGHT_SIDE_SLOT_OVERRIDES: Record<string, Partial<Pick<LayoutSlot, "label" | "x" | "y" | "w" | "h">>> = {
+function emptyAdAssignment(slot: LayoutSlot): SlotAssignment {
+  return {
+    ad: {
+      title: "Advertisement",
+      size: `${slot.w} columns x ${slot.h} rows`,
+      imageUrl: "",
+      subtitle: "",
+      contact: "",
+      note: "",
+    },
+  };
+}
+
+function isDefaultAdPlaceholder(assignment?: SlotAssignment) {
+  const ad = assignment?.ad;
+  if (!ad) return false;
+
+  const title = ad.title.trim();
+  return (
+    (!title || title === "Advertisement") &&
+    !ad.imageUrl?.trim() &&
+    !ad.subtitle?.trim() &&
+    !ad.contact?.trim() &&
+    !ad.note?.trim()
+  );
+}
+
+function sanitizeAssignments(assignments: Record<string, SlotAssignment>) {
+  return Object.fromEntries(
+    Object.entries(assignments).map(([slotId, assignment]) => [
+      slotId,
+      isDefaultAdPlaceholder(assignment) ? {} : assignment,
+    ]),
+  ) as Record<string, SlotAssignment>;
+}
+
+function asArticleSlot(slot: LayoutSlot): LayoutSlot {
+  if (slot.kind !== "ad") return slot;
+  return {
+    ...slot,
+    kind: "story",
+    label:
+      slot.label.replace(/\b(ad|advertisement|classified|sponsor|promo)\b/gi, "Article").trim() ||
+      "Article block",
+    locked: false,
+  };
+}
+
+const RIGHT_SIDE_SLOT_OVERRIDES: Record<
+  string,
+  Partial<Pick<LayoutSlot, "label" | "x" | "y" | "w" | "h">>
+> = {
   ad_bottom: { label: "Right advertisement", x: 9, y: 16, w: 4, h: 3 },
   footer_ad: { label: "Right footer ad", x: 9, y: 16, w: 4, h: 3 },
   classified: { label: "Right classified", x: 9, y: 17, w: 4, h: 2 },
@@ -380,12 +431,8 @@ function createInitialState(template: LayoutTemplateDef, articles: Article[]): L
     .sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0));
 
   template.slots.forEach((slot, index) => {
-    if (slot.kind === "ad") {
-      assignments[slot.id] = { ad: { title: "Advertisement", size: `${slot.w} x ${slot.h}` } };
-      return;
-    }
-
-    const article = pageOneArticles[index] ?? articles.find((candidate) => !assignedArticleIds.has(candidate.id));
+    const article =
+      pageOneArticles[index] ?? articles.find((candidate) => !assignedArticleIds.has(candidate.id));
     if (article) {
       assignedArticleIds.add(article.id);
       assignments[slot.id] = { articleId: article.id };
@@ -394,7 +441,9 @@ function createInitialState(template: LayoutTemplateDef, articles: Article[]): L
 
   return {
     templateId: template.id,
-    slots: cloneSlots(template.slots),
+    slots: cloneSlots(template.slots).map((slot) =>
+      assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot,
+    ),
     assignments,
     rowScale: 100,
     columnScale: 100,
@@ -404,7 +453,7 @@ function createInitialState(template: LayoutTemplateDef, articles: Article[]): L
 }
 
 function articleSlotsFor(template: LayoutTemplateDef) {
-  return template.slots.filter((slot) => slot.kind !== "ad");
+  return template.slots;
 }
 
 function templateCapacity(template: LayoutTemplateDef) {
@@ -417,7 +466,11 @@ function chooseTemplateForArticleCount(articleCount: number) {
     const bCapacity = templateCapacity(b);
     const aOverflow = aCapacity < articleCount ? 100 : 0;
     const bOverflow = bCapacity < articleCount ? 100 : 0;
-    return Math.abs(aCapacity - articleCount) + aOverflow - (Math.abs(bCapacity - articleCount) + bOverflow);
+    return (
+      Math.abs(aCapacity - articleCount) +
+      aOverflow -
+      (Math.abs(bCapacity - articleCount) + bOverflow)
+    );
   })[0];
 }
 
@@ -430,19 +483,23 @@ function pageNumbersFor(pageStates?: Record<number, LayoutState>) {
   return existingPageNumbers.length > 0 ? existingPageNumbers : [1];
 }
 
-function createPageState(template: LayoutTemplateDef, articles: Article[], pageNumber: number): LayoutState {
+function createPageState(
+  template: LayoutTemplateDef,
+  articles: Article[],
+  pageNumber: number,
+): LayoutState {
   const assignments: Record<string, SlotAssignment> = {};
   const articleSlots = articleSlotsFor(template);
-  const sortedArticles = [...articles].sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0));
-  const pageArticles = sortedArticles.slice((pageNumber - 1) * articleSlots.length, pageNumber * articleSlots.length);
+  const sortedArticles = [...articles].sort(
+    (a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0),
+  );
+  const pageArticles = sortedArticles.slice(
+    (pageNumber - 1) * articleSlots.length,
+    pageNumber * articleSlots.length,
+  );
   let articleIndex = 0;
 
   template.slots.forEach((slot) => {
-    if (slot.kind === "ad") {
-      assignments[slot.id] = { ad: { title: "Advertisement", size: `${slot.w} x ${slot.h}` } };
-      return;
-    }
-
     const article = pageArticles[articleIndex];
     if (article) assignments[slot.id] = { articleId: article.id };
     articleIndex += 1;
@@ -450,7 +507,9 @@ function createPageState(template: LayoutTemplateDef, articles: Article[], pageN
 
   return {
     templateId: template.id,
-    slots: cloneSlots(template.slots),
+    slots: cloneSlots(template.slots).map((slot) =>
+      assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot,
+    ),
     assignments,
     rowScale: 100,
     columnScale: 100,
@@ -459,18 +518,16 @@ function createPageState(template: LayoutTemplateDef, articles: Article[], pageN
 }
 
 function applyTemplateToPage(pageState: LayoutState, template: LayoutTemplateDef): LayoutState {
+  const existingAssignments = sanitizeAssignments(pageState.assignments);
   const existingStoryAssignments = pageState.slots
-    .filter((slot) => slot.kind !== "ad")
-    .map((slot) => pageState.assignments[slot.id])
+    .map((slot) => existingAssignments[slot.id])
     .filter((assignment): assignment is SlotAssignment => Boolean(assignment?.articleId));
   let storyIndex = 0;
 
   const assignments: Record<string, SlotAssignment> = {};
   template.slots.forEach((slot) => {
-    if (slot.kind === "ad") {
-      assignments[slot.id] = pageState.assignments[slot.id]?.ad
-        ? pageState.assignments[slot.id]
-        : { ad: { title: "Advertisement", size: `${slot.w} x ${slot.h}` } };
+    if (existingAssignments[slot.id]?.ad) {
+      assignments[slot.id] = existingAssignments[slot.id];
       return;
     }
 
@@ -478,14 +535,16 @@ function applyTemplateToPage(pageState: LayoutState, template: LayoutTemplateDef
     if (assignment) assignments[slot.id] = assignment;
     storyIndex += 1;
   });
-  if (pageState.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID]) {
-    assignments[FRONT_PAGE_HEADER_AD_SLOT_ID] = pageState.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID];
+  if (existingAssignments[FRONT_PAGE_HEADER_AD_SLOT_ID]?.ad) {
+    assignments[FRONT_PAGE_HEADER_AD_SLOT_ID] = existingAssignments[FRONT_PAGE_HEADER_AD_SLOT_ID];
   }
 
   return {
     ...pageState,
     templateId: template.id,
-    slots: cloneSlots(template.slots),
+    slots: cloneSlots(template.slots).map((slot) =>
+      assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot,
+    ),
     assignments,
     headerQuote: pageState.headerQuote ?? DEFAULT_HEADER_QUOTE,
   };
@@ -495,6 +554,56 @@ function createPagedStates(template: LayoutTemplateDef, articles: Article[]) {
   return {
     1: createPageState(template, articles, 1),
   } as Record<number, LayoutState>;
+}
+
+export function createGeneratedEditorLayout(articles: Article[], numberOfPages: number) {
+  const sortedArticles = [...articles].sort(
+    (a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0),
+  );
+  const maxTemplateCapacity = Math.max(...TEMPLATE_DEFS.map(templateCapacity), 1);
+  const pageCount = Math.max(
+    1,
+    numberOfPages,
+    Math.ceil(sortedArticles.length / maxTemplateCapacity),
+  );
+  const articleById = new Map(sortedArticles.map((article) => [article.id, article]));
+  const pages: Record<number, LayoutState> = {};
+  let articleIndex = 0;
+
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    const remainingArticles = Math.max(0, sortedArticles.length - articleIndex);
+    const remainingPages = Math.max(1, pageCount - pageNumber + 1);
+    const pageArticleTarget = Math.ceil(remainingArticles / remainingPages);
+    const template = chooseTemplateForArticleCount(Math.max(1, pageArticleTarget));
+    const assignments: Record<string, SlotAssignment> = {};
+    const slots = cloneSlots(template.slots);
+
+    for (const slot of slots) {
+      const article = sortedArticles[articleIndex];
+      if (!article) break;
+      assignments[slot.id] = { articleId: article.id };
+      articleIndex += 1;
+    }
+
+    pages[pageNumber] = autoFitArticleSpace(
+      {
+        templateId: template.id,
+        slots: slots.map((slot) => (assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot)),
+        assignments,
+        rowScale: 100,
+        columnScale: 100,
+        gutter: 8,
+        headerQuote: pageNumber === 1 ? DEFAULT_HEADER_QUOTE : undefined,
+      },
+      articleById,
+    );
+  }
+
+  return {
+    active_page: 1,
+    pages,
+    saved_at: new Date().toISOString(),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -513,18 +622,36 @@ function isLayoutState(value: unknown): value is LayoutState {
   );
 }
 
-function savedLayoutToPageStates(layoutJson: unknown): { activePage: number; pageStates: Record<number, LayoutState> } | null {
+function savedLayoutToPageStates(
+  layoutJson: unknown,
+): { activePage: number; pageStates: Record<number, LayoutState> } | null {
   if (!isRecord(layoutJson) || !isRecord(layoutJson.pages)) return null;
 
   const pageStates = Object.fromEntries(
     Object.entries(layoutJson.pages)
       .filter(([, pageState]) => isLayoutState(pageState))
-      .map(([pageNumber, pageState]) => [Number(pageNumber), alignRightSideAds(pageState as LayoutState)]),
+      .map(([pageNumber, pageState]) => {
+        const state = alignRightSideAds(pageState as LayoutState);
+        const assignments = sanitizeAssignments(state.assignments);
+        return [
+          Number(pageNumber),
+          {
+            ...state,
+            slots: state.slots.map((slot) =>
+              assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot,
+            ),
+            assignments,
+          },
+        ];
+      }),
   ) as Record<number, LayoutState>;
 
   if (Object.keys(pageStates).length === 0) return null;
 
-  const activePage = typeof layoutJson.active_page === "number" ? layoutJson.active_page : Number(Object.keys(pageStates)[0]);
+  const activePage =
+    typeof layoutJson.active_page === "number"
+      ? layoutJson.active_page
+      : Number(Object.keys(pageStates)[0]);
   return {
     activePage: pageStates[activePage] ? activePage : Number(Object.keys(pageStates)[0]),
     pageStates,
@@ -545,7 +672,7 @@ function reconcilePagedStates(
     nextPages[pageNumber] = alignRightSideAds({
       ...existing,
       assignments: Object.fromEntries(
-        Object.entries(existing.assignments).map(([slotId, assignment]) => [
+        Object.entries(sanitizeAssignments(existing.assignments)).map(([slotId, assignment]) => [
           slotId,
           assignment.articleId && !validArticleIds.has(assignment.articleId) ? {} : assignment,
         ]),
@@ -561,56 +688,14 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function normalizeTextTuning(tuning?: TextTuning): TextTuning {
-  return {
-    headlineScale: clamp(tuning?.headlineScale ?? DEFAULT_TEXT_TUNING.headlineScale, MIN_TEXT_SCALE, MAX_TEXT_SCALE),
-    bodyScale: clamp(tuning?.bodyScale ?? DEFAULT_TEXT_TUNING.bodyScale, MIN_TEXT_SCALE, MAX_TEXT_SCALE),
-  };
+  return normalizeNewspaperTextTuning(tuning);
 }
 
-function imageCaption(article?: Article) {
-  if (!article) return "";
-  return article.summary ? article.summary.slice(0, 110) : article.headline ? `Photo: ${article.headline}` : "Photo";
-}
-
-function optimizeImagePlacement(article: Article | undefined, slot: LayoutSlot): ImagePlacement | null {
-  if (!article?.image_url) return null;
-
-  const textLength = articleText(article).length + (article.headline?.length ?? 0) * 2;
-  const wideSlot = slot.w >= 8;
-  const tallSlot = slot.h >= 7;
-  const dense = textLength / Math.max(slot.w * slot.h, 1) > 44;
-  const imageDominant = slot.kind === "image" || (slot.kind === "lead" && wideSlot && tallSlot);
-
-  if (imageDominant) {
-    return {
-      position: "full",
-      wrap: "square",
-      widthPct: 100,
-      aspectRatio: wideSlot ? 16 / 9 : 4 / 3,
-      margin: 6,
-      caption: imageCaption(article),
-    };
-  }
-
-  if (!wideSlot) {
-    return {
-      position: "center",
-      wrap: "square",
-      widthPct: clamp(slot.w * 12, 52, 88),
-      aspectRatio: 4 / 3,
-      margin: 6,
-      caption: imageCaption(article),
-    };
-  }
-
-  return {
-    position: dense ? "right" : "left",
-    wrap: "tight",
-    widthPct: dense ? 36 : 44,
-    aspectRatio: 4 / 3,
-    margin: 8,
-    caption: imageCaption(article),
-  };
+function optimizeImagePlacement(
+  article: Article | undefined,
+  slot: LayoutSlot,
+): ImagePlacement | null {
+  return optimizeNewspaperImagePlacement(article, slot);
 }
 
 function normalizeImagePlacement(
@@ -618,17 +703,7 @@ function normalizeImagePlacement(
   slot: LayoutSlot,
   placement?: ImagePlacement,
 ): ImagePlacement | null {
-  const optimized = optimizeImagePlacement(article, slot);
-  if (!optimized) return null;
-  const next = placement ? { ...optimized, ...placement } : optimized;
-  const maxWidth = next.position === "full" ? 100 : slot.w <= 4 ? 88 : MAX_IMAGE_WIDTH_PCT;
-
-  return {
-    ...next,
-    widthPct: clamp(next.widthPct, MIN_IMAGE_WIDTH_PCT, maxWidth),
-    margin: clamp(next.margin, 4, 14),
-    aspectRatio: clamp(next.aspectRatio, 0.7, 2),
-  };
+  return normalizeNewspaperImagePlacement(article, slot, placement);
 }
 
 function getArticleFit(
@@ -636,41 +711,7 @@ function getArticleFit(
   slot: LayoutSlot,
   assignment?: SlotAssignment,
 ): FittingPlan {
-  const textLength = articleText(article).length + (article?.headline?.length ?? 0) * 2;
-  const area = slot.w * slot.h;
-  const density = textLength / Math.max(area, 1);
-  const textTuning = normalizeTextTuning(assignment?.text);
-  const baseHeadlineSize = Math.max(13, Math.min(slot.kind === "lead" ? 34 : 22, 34 - density * 0.18));
-  const baseBodySize = Math.max(6.8, Math.min(slot.kind === "lead" ? 11.5 : 9.8, 11.5 - density * 0.055));
-  const headlineSize = clamp(baseHeadlineSize * (textTuning.headlineScale / 100), 10, slot.kind === "lead" ? 38 : 28);
-  const bodySize = clamp(baseBodySize * (textTuning.bodyScale / 100), 6, slot.kind === "lead" ? 14 : 12);
-  const maxColumns = slot.w >= 10 ? 4 : slot.w >= 7 ? 3 : slot.w >= 4 ? 2 : 1;
-  const columns = Math.min(
-    maxColumns,
-    density > 48 ? maxColumns : density > 30 ? Math.max(1, maxColumns - 1) : slot.w >= 8 ? 2 : 1,
-  );
-  const image = normalizeImagePlacement(article, slot, assignment?.image);
-  const spacing = density > 55 ? 2 : density > 36 ? 4 : 6;
-  const padding = slot.w <= 4 || density > 58 ? 6 : slot.kind === "lead" ? 10 : 8;
-  const columnGap = slot.w <= 4 ? 7 : slot.w >= 9 ? 11 : 9;
-  const bodyLineHeight = density > 58 ? 1.14 : density > 38 ? 1.18 : 1.24;
-  const headlineLineHeight = slot.kind === "lead" ? 1 : 1.04;
-  const paragraphGap = density > 55 ? 2 : density > 36 ? 3 : 5;
-  const justifyBody = slot.w >= 4 && bodySize >= 6.5;
-
-  return {
-    headlineSize,
-    bodySize,
-    image,
-    columns,
-    spacing,
-    padding,
-    columnGap,
-    bodyLineHeight,
-    headlineLineHeight,
-    paragraphGap,
-    justifyBody,
-  };
+  return getNewspaperArticleFit(article, slot, assignment);
 }
 
 function collides(a: LayoutSlot, b: LayoutSlot) {
@@ -678,11 +719,177 @@ function collides(a: LayoutSlot, b: LayoutSlot) {
 }
 
 function canResizeSlot(slots: LayoutSlot[], slotId: string, next: LayoutSlot) {
-  if (next.x < 1 || next.y < 1 || next.x + next.w - 1 > GRID_COLUMNS || next.y + next.h - 1 > GRID_ROWS) {
+  if (
+    next.x < 1 ||
+    next.y < 1 ||
+    next.x + next.w - 1 > GRID_COLUMNS ||
+    next.y + next.h - 1 > GRID_ROWS
+  ) {
     return false;
   }
 
   return !slots.some((slot) => slot.id !== slotId && collides(next, slot));
+}
+
+function reflowSlotsIntoOpenSpace(
+  slots: LayoutSlot[],
+  assignments: Record<string, SlotAssignment>,
+  options: {
+    excludeSlotIds?: Set<string>;
+    scoreSlot?: (slot: LayoutSlot) => number;
+  } = {},
+) {
+  const nextSlots = cloneSlots(slots);
+  const directions: Array<(slot: LayoutSlot) => LayoutSlot> = [
+    (slot) => ({ ...slot, h: slot.h + 1 }),
+    (slot) => ({ ...slot, y: slot.y - 1, h: slot.h + 1 }),
+    (slot) => ({ ...slot, w: slot.w + 1 }),
+    (slot) => ({ ...slot, x: slot.x - 1, w: slot.w + 1 }),
+  ];
+
+  for (let pass = 0; pass < GRID_COLUMNS * GRID_ROWS; pass += 1) {
+    let changed = false;
+    const orderedSlots = [...nextSlots].sort((a, b) => {
+      const scoreDiff = (options.scoreSlot?.(b) ?? 0) - (options.scoreSlot?.(a) ?? 0);
+      const articleWeight =
+        Number(Boolean(assignments[b.id]?.articleId)) -
+        Number(Boolean(assignments[a.id]?.articleId));
+      return scoreDiff || articleWeight || a.y - b.y || a.x - b.x;
+    });
+
+    for (const slot of orderedSlots) {
+      if (options.excludeSlotIds?.has(slot.id)) continue;
+      if (slot.locked || assignments[slot.id]?.ad) continue;
+      const slotIndex = nextSlots.findIndex((item) => item.id === slot.id);
+      if (slotIndex < 0) continue;
+
+      const expanded = directions
+        .map((direction) => direction(nextSlots[slotIndex]))
+        .find((candidate) => canResizeSlot(nextSlots, slot.id, candidate));
+
+      if (expanded) {
+        nextSlots[slotIndex] = expanded;
+        changed = true;
+      }
+    }
+
+    if (!changed) break;
+  }
+
+  return nextSlots;
+}
+
+function estimateArticleFill(
+  article: Article | undefined,
+  slot: LayoutSlot,
+  assignment?: SlotAssignment,
+) {
+  if (!article) return 0;
+
+  const textLength = articleText(article).length + (article.headline?.length ?? 0) * 2;
+  const slotArea = Math.max(slot.w * slot.h, 1);
+  const densityTarget = slot.kind === "lead" ? 44 : slot.w <= 4 ? 40 : 48;
+  const imageArea = article.image_url ? (assignment?.image?.position === "full" ? 2.4 : 1.5) : 0;
+  const estimatedContentArea = Math.max(1.5, textLength / densityTarget + imageArea);
+
+  return estimatedContentArea / slotArea;
+}
+
+function autoFitAssignmentForArticle(
+  article: Article,
+  slot: LayoutSlot,
+  assignment: SlotAssignment,
+): SlotAssignment {
+  const fill = estimateArticleFill(article, slot, assignment);
+  if (fill >= AUTO_FIT_TARGET_FILL) return assignment;
+
+  const emptyRatio = clamp(AUTO_FIT_TARGET_FILL - fill, 0, AUTO_FIT_TARGET_FILL);
+  const scaleBoost = Math.round(emptyRatio * 45);
+  const currentText = normalizeTextTuning(assignment.text);
+  const nextText = normalizeTextTuning({
+    headlineScale: Math.min(
+      AUTO_FIT_TEXT_SCALE_LIMIT,
+      Math.max(currentText.headlineScale, 100 + Math.round(scaleBoost * 0.8)),
+    ),
+    bodyScale: Math.min(
+      AUTO_FIT_TEXT_SCALE_LIMIT,
+      Math.max(currentText.bodyScale, 100 + scaleBoost),
+    ),
+  });
+  const nextImage = article.image_url
+    ? normalizeImagePlacement(article, slot, {
+        ...(assignment.image ??
+          optimizeImagePlacement(article, slot) ?? {
+            position: slot.w >= 7 ? "right" : "center",
+            wrap: "square",
+            widthPct: 52,
+            aspectRatio: 4 / 3,
+            margin: 6,
+            caption: "",
+          }),
+        widthPct: Math.min(
+          MAX_IMAGE_WIDTH_PCT,
+          Math.max(assignment.image?.widthPct ?? 52, 52 + Math.round(emptyRatio * 34)),
+        ),
+      })
+    : assignment.image;
+
+  return {
+    ...assignment,
+    text: nextText,
+    image: nextImage ?? assignment.image,
+  };
+}
+
+function autoFitArticleSpace(
+  pageState: LayoutState,
+  articleById: Map<string, Article>,
+): LayoutState {
+  const assignments = { ...pageState.assignments };
+  const shrunkSlotIds = new Set<string>();
+  const nextSlots = pageState.slots.map((slot) => {
+    const assignment = assignments[slot.id];
+    const article = assignment?.articleId ? articleById.get(assignment.articleId) : undefined;
+    if (!assignment?.articleId || !article || assignment.ad) return slot;
+
+    const fittedAssignment = autoFitAssignmentForArticle(article, slot, assignment);
+    assignments[slot.id] = fittedAssignment;
+
+    const fillAfterTuning = estimateArticleFill(article, slot, fittedAssignment);
+    const minHeight = slot.kind === "lead" ? 3 : article.image_url ? 3 : 2;
+    const targetHeight = clamp(
+      Math.ceil((slot.h * Math.max(fillAfterTuning, 0.38)) / AUTO_FIT_TARGET_FILL),
+      minHeight,
+      slot.h,
+    );
+
+    if (!slot.locked && slot.h - targetHeight >= 1) {
+      shrunkSlotIds.add(slot.id);
+      return { ...slot, h: targetHeight };
+    }
+
+    return slot;
+  });
+
+  if (shrunkSlotIds.size === 0) {
+    return {
+      ...pageState,
+      assignments,
+    };
+  }
+
+  return {
+    ...pageState,
+    slots: reflowSlotsIntoOpenSpace(nextSlots, assignments, {
+      excludeSlotIds: shrunkSlotIds,
+      scoreSlot: (slot) => {
+        const assignment = assignments[slot.id];
+        const article = assignment?.articleId ? articleById.get(assignment.articleId) : undefined;
+        return estimateArticleFill(article, slot, assignment);
+      },
+    }),
+    assignments,
+  };
 }
 
 function DraggableArticleChip({ article, disabled }: { article: Article; disabled?: boolean }) {
@@ -695,7 +902,9 @@ function DraggableArticleChip({ article, disabled }: { article: Article; disable
     <button
       ref={setNodeRef}
       type="button"
-      className={`w-full rounded-md border bg-background p-2 text-left shadow-sm transition ${isDragging ? "opacity-40" : "hover:border-primary/60"}`}
+      className={`w-full rounded-md border bg-background p-2 text-left shadow-sm transition ${
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing"
+      } ${isDragging ? "opacity-40" : "hover:border-primary/60 hover:bg-primary/5"}`}
       style={{
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
       }}
@@ -711,6 +920,9 @@ function DraggableArticleChip({ article, disabled }: { article: Article; disable
           <div className="mt-1 flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
             <span>{article.category ?? "Other"}</span>
             <span>P{article.priority_score ?? 0}</span>
+            {!disabled && (
+              <span className="ml-auto normal-case tracking-normal">Drag to paper</span>
+            )}
           </div>
         </div>
       </div>
@@ -758,13 +970,17 @@ function PrajavaniLayoutMasthead() {
           ಪ್ರಜಾ
         </span>
         <div className="mb-1 flex w-28 justify-center">
-          <img src="/prajavani-nandi.png" alt="Prajavani Nandi logo" className="h-12 w-28 object-contain" />
+          <img
+            src="/prajavani-nandi.png"
+            alt="Prajavani Nandi logo"
+            className="h-12 w-28 object-contain"
+          />
         </div>
         <span className="text-left font-kannada-serif text-[50px] font-black leading-none tracking-normal">
           ವಾಣಿ
         </span>
       </div>
-      <div className="-mt-1 font-kannada text-[10px] font-semibold leading-none tracking-wide">
+      <div className="mt-2 font-kannada text-[10px] font-semibold leading-none tracking-wide">
         ಆತ್ಮ ವಿಶ್ವಾಸದ ಕನ್ನಡ ದಿನಪತ್ರಿಕೆ
       </div>
     </div>
@@ -787,8 +1003,8 @@ function HeaderQuoteBox({
   return (
     <button
       type="button"
-      className={`relative flex h-full min-h-0 flex-col justify-center overflow-hidden border bg-white px-3 py-2 text-left text-newsprint-ink transition ${
-        selected ? "ring-2 ring-primary" : "border-newsprint-rule"
+      className={`relative flex h-full min-h-0 flex-col justify-center overflow-hidden bg-white px-3 py-2 text-left text-newsprint-ink transition ${
+        selected ? "ring-2 ring-primary" : ""
       }`}
       style={{
         gridColumn: "1 / span 3",
@@ -827,12 +1043,17 @@ function ArticleSlot({
   onSelect: () => void;
   onUpdateAssignment: (assignment: SlotAssignment) => void;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `slot:${slot.id}`, disabled: slot.locked || !canEdit });
-  const draggable = useDraggable({ id: `slotdrag:${slot.id}`, disabled: slot.locked || !assignment || !canEdit });
+  const { setNodeRef, isOver } = useDroppable({
+    id: `slot:${slot.id}`,
+    disabled: slot.locked || !canEdit,
+  });
+  const draggable = useDraggable({
+    id: `slotdrag:${slot.id}`,
+    disabled: slot.locked || !assignment || !canEdit,
+  });
   const fit = getArticleFit(article, slot, assignment);
-  const isAd = Boolean(assignment?.ad) || slot.kind === "ad";
+  const isAd = Boolean(assignment?.ad);
   const showChrome = previewMode !== "pdf";
-  const paragraphs = articleParagraphs(article);
 
   function resizeImage(startEvent: ReactPointerEvent<HTMLButtonElement>, direction: -1 | 1) {
     if (!fit.image || !assignment || !canEdit) return;
@@ -840,7 +1061,8 @@ function ArticleSlot({
     startEvent.stopPropagation();
 
     const startX = startEvent.clientX;
-    const containerWidth = startEvent.currentTarget.closest("[data-article-slot]")?.clientWidth ?? 240;
+    const containerWidth =
+      startEvent.currentTarget.closest("[data-article-slot]")?.clientWidth ?? 240;
     const startWidth = fit.image.widthPct;
 
     function onMove(event: PointerEvent) {
@@ -870,86 +1092,50 @@ function ArticleSlot({
       image: {
         ...fit.image,
         position: nextPosition,
-        widthPct: nextPosition === "full" ? 100 : clamp(fit.image.widthPct, MIN_IMAGE_WIDTH_PCT, 88),
+        widthPct:
+          nextPosition === "full" ? 100 : clamp(fit.image.widthPct, MIN_IMAGE_WIDTH_PCT, 88),
       },
     });
   }
 
-  function imageFigure() {
-    if (!article?.image_url || !fit.image) return null;
-
-    const floated = fit.image.position === "left" || fit.image.position === "right";
-    const figureWidth = fit.image.position === "full" ? "100%" : `${fit.image.widthPct}%`;
+  function editorImageControls() {
+    if (!fit.image || !assignment || !canEdit || previewMode === "pdf") return null;
 
     return (
-      <figure
-        className={`group relative break-inside-avoid overflow-hidden rounded-sm border border-newsprint-rule bg-white ${
-          floated
-            ? fit.image.position === "left"
-              ? "float-left"
-              : "float-right"
-            : fit.image.position === "center"
-              ? "mx-auto"
-              : "w-full"
-        }`}
-        style={{
-          width: figureWidth,
-          margin:
-            fit.image.position === "left"
-              ? `0 ${fit.image.margin}px ${fit.image.margin}px 0`
-              : fit.image.position === "right"
-                ? `0 0 ${fit.image.margin}px ${fit.image.margin}px`
-                : `${fit.image.margin}px auto`,
-          shapeOutside: fit.image.wrap === "tight" && floated ? "inset(0 round 2px)" : undefined,
-        }}
-      >
-        <img
-          src={article.image_url}
-          alt=""
-          draggable={false}
-          className="block w-full select-none object-cover"
-          style={{ aspectRatio: fit.image.aspectRatio }}
+      <>
+        <div className="absolute right-1 top-1 hidden rounded bg-white/90 p-0.5 shadow-sm group-hover:flex">
+          {(["left", "center", "right", "full"] as const).map((position) => (
+            <button
+              key={position}
+              type="button"
+              className={`h-5 min-w-5 rounded px-1 text-[8px] uppercase ${
+                fit.image?.position === position
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground"
+              }`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                moveImage(position);
+              }}
+            >
+              {position[0]}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          aria-label="Resize image from left"
+          className="absolute bottom-0 left-0 h-4 w-4 cursor-nwse-resize rounded-tr bg-primary/80 opacity-0 transition group-hover:opacity-100"
+          onPointerDown={(event) => resizeImage(event, -1)}
         />
-        {fit.image.caption && (
-          <figcaption className="border-t border-newsprint-rule/60 px-1.5 py-1 text-left text-[8px] italic leading-[1.15] text-newsprint-ink/70">
-            {fit.image.caption}
-          </figcaption>
-        )}
-        {canEdit && previewMode !== "pdf" && (
-          <>
-            <div className="absolute right-1 top-1 hidden rounded bg-white/90 p-0.5 shadow-sm group-hover:flex">
-              {(["left", "center", "right", "full"] as const).map((position) => (
-                <button
-                  key={position}
-                  type="button"
-                  className={`h-5 min-w-5 rounded px-1 text-[8px] uppercase ${
-                    fit.image?.position === position ? "bg-primary text-primary-foreground" : "text-muted-foreground"
-                  }`}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    moveImage(position);
-                  }}
-                >
-                  {position[0]}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              aria-label="Resize image from left"
-              className="absolute bottom-0 left-0 h-4 w-4 cursor-nwse-resize rounded-tr bg-primary/80 opacity-0 transition group-hover:opacity-100"
-              onPointerDown={(event) => resizeImage(event, -1)}
-            />
-            <button
-              type="button"
-              aria-label="Resize image from right"
-              className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize rounded-tl bg-primary/80 opacity-0 transition group-hover:opacity-100"
-              onPointerDown={(event) => resizeImage(event, 1)}
-            />
-          </>
-        )}
-      </figure>
+        <button
+          type="button"
+          aria-label="Resize image from right"
+          className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize rounded-tl bg-primary/80 opacity-0 transition group-hover:opacity-100"
+          onPointerDown={(event) => resizeImage(event, 1)}
+        />
+      </>
     );
   }
 
@@ -957,8 +1143,8 @@ function ArticleSlot({
     <div
       ref={setNodeRef}
       data-article-slot
-      className={`relative min-h-0 overflow-hidden border bg-white transition ${
-        selected ? "ring-2 ring-primary" : "border-newsprint-rule"
+      className={`relative min-h-0 overflow-hidden bg-white transition ${
+        selected ? "ring-2 ring-primary" : ""
       } ${isOver ? "bg-emerald-50 ring-2 ring-emerald-500" : ""} ${!assignment?.articleId && !assignment?.ad && !isAd ? "bg-muted/20" : ""}`}
       style={{
         gridColumn: `${slot.x} / span ${slot.w}`,
@@ -995,7 +1181,7 @@ function ArticleSlot({
       )}
 
       {isAd && !assignment?.articleId && (
-        <div className="h-full overflow-hidden border border-dashed border-amber-500 bg-amber-50 text-center text-amber-950">
+        <div className="h-full overflow-hidden bg-amber-50 text-center text-amber-950">
           {assignment?.ad?.imageUrl ? (
             <img
               src={assignment.ad.imageUrl}
@@ -1009,11 +1195,17 @@ function ArticleSlot({
                 {assignment?.ad?.title ?? "Advertisement"}
               </div>
               {assignment?.ad?.subtitle && (
-                <div className="text-[9px] font-semibold leading-tight">{assignment.ad.subtitle}</div>
+                <div className="text-[9px] font-semibold leading-tight">
+                  {assignment.ad.subtitle}
+                </div>
               )}
-              {assignment?.ad?.contact && <div className="text-[8px] leading-tight">{assignment.ad.contact}</div>}
+              {assignment?.ad?.contact && (
+                <div className="text-[8px] leading-tight">{assignment.ad.contact}</div>
+              )}
               {assignment?.ad?.note ? (
-                <div className="text-[8px] italic leading-tight opacity-75">{assignment.ad.note}</div>
+                <div className="text-[8px] italic leading-tight opacity-75">
+                  {assignment.ad.note}
+                </div>
               ) : (
                 <div className="text-[8px] uppercase tracking-wide opacity-70">
                   {assignment?.ad?.size ?? `${slot.w} columns x ${slot.h} rows`}
@@ -1025,44 +1217,12 @@ function ArticleSlot({
       )}
 
       {assignment?.articleId && article && (
-        <div className="flex h-full flex-col text-newsprint-ink" style={{ gap: fit.spacing, padding: fit.padding }}>
-          <h3
-            className="m-0 text-balance font-kannada-serif font-black"
-            style={{ fontSize: fit.headlineSize, lineHeight: fit.headlineLineHeight }}
-          >
-            {article.headline || "Untitled article"}
-          </h3>
-          <div
-            className="min-h-0 flex-1 font-kannada"
-            style={{
-              columnCount: fit.columns,
-              columnGap: fit.columnGap,
-              columnRule: fit.columns > 1 ? "1px solid rgba(63, 56, 45, 0.18)" : undefined,
-              fontSize: fit.bodySize,
-              lineHeight: fit.bodyLineHeight,
-              textAlign: fit.justifyBody ? "justify" : "left",
-              textJustify: "inter-word",
-              wordBreak: slot.w <= 3 ? "break-word" : "normal",
-              overflowWrap: "break-word",
-              hyphens: "auto",
-            }}
-          >
-            {imageFigure()}
-            {paragraphs.length > 0
-              ? paragraphs.map((paragraph, index) => (
-                  <p
-                    key={`${article.id}-paragraph-${index}`}
-                    className="m-0 break-inside-avoid"
-                    style={{
-                      marginBottom: index === paragraphs.length - 1 ? 0 : fit.paragraphGap,
-                    }}
-                  >
-                    {paragraph}
-                  </p>
-                ))
-              : null}
-          </div>
-        </div>
+        <NewspaperArticleBlockContent
+          article={article}
+          slot={slot}
+          assignment={assignment}
+          imageControls={editorImageControls()}
+        />
       )}
     </div>
   );
@@ -1080,7 +1240,10 @@ export function NewspaperLayoutEditor({
 }) {
   const queryClient = useQueryClient();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
-  const articleById = useMemo(() => new Map(articles.map((article) => [article.id, article])), [articles]);
+  const articleById = useMemo(
+    () => new Map(articles.map((article) => [article.id, article])),
+    [articles],
+  );
   const [activePage, setActivePage] = useState(1);
   const [pageStates, setPageStates] = useState<Record<number, LayoutState>>(() =>
     createPagedStates(TEMPLATE_DEFS[0], articles),
@@ -1092,9 +1255,11 @@ export function NewspaperLayoutEditor({
   const [activeDragLabel, setActiveDragLabel] = useState("");
   const [past, setPast] = useState<LayoutState[]>([]);
   const [future, setFuture] = useState<LayoutState[]>([]);
-  const currentTemplate = TEMPLATE_DEFS.find((item) => item.id === state.templateId) ?? TEMPLATE_DEFS[0];
+  const currentTemplate =
+    TEMPLATE_DEFS.find((item) => item.id === state.templateId) ?? TEMPLATE_DEFS[0];
   const pageNumbers = pageNumbersFor(pageStates);
-  const pageHeaderSlots = activePage === 1 ? [FRONT_PAGE_HEADER_AD_SLOT, FRONT_PAGE_HEADER_QUOTE_SLOT] : [];
+  const pageHeaderSlots =
+    activePage === 1 ? [FRONT_PAGE_HEADER_AD_SLOT, FRONT_PAGE_HEADER_QUOTE_SLOT] : [];
   const selectableSlots = [...pageHeaderSlots, ...state.slots];
   const savedLayoutQuery = useQuery({
     queryKey: ["saved-layout", newspaperId],
@@ -1114,7 +1279,13 @@ export function NewspaperLayoutEditor({
   const selectedSlot = selectableSlots.find((slot) => slot.id === selectedSlotId) ?? state.slots[0];
   const selectedIsHeaderQuote = selectedSlot?.id === FRONT_PAGE_HEADER_QUOTE_SLOT_ID;
   const selectedAssignment = selectedSlot ? state.assignments[selectedSlot.id] : undefined;
-  const selectedArticle = selectedAssignment?.articleId ? articleById.get(selectedAssignment.articleId) : undefined;
+  const selectedIsAdBlock = Boolean(
+    selectedSlot && (selectedSlot.kind === "ad" || selectedAssignment?.ad),
+  );
+  const selectedAdIsMissing = Boolean(selectedIsAdBlock && !selectedAssignment?.ad);
+  const selectedArticle = selectedAssignment?.articleId
+    ? articleById.get(selectedAssignment.articleId)
+    : undefined;
   const selectedImage = selectedSlot
     ? normalizeImagePlacement(selectedArticle, selectedSlot, selectedAssignment?.image)
     : null;
@@ -1127,19 +1298,42 @@ export function NewspaperLayoutEditor({
     ),
   );
   const unassignedArticles = articles.filter((article) => !assignedArticleIds.has(article.id));
-  const pagePlacedCount = Object.values(state.assignments).filter((assignment) => assignment.articleId).length;
-  const pageCapacity = articleSlotsFor(currentTemplate).length;
+  const pagePlacedCount = Object.values(state.assignments).filter(
+    (assignment) => assignment.articleId,
+  ).length;
+  const pageCapacity = state.slots.filter((slot) => !state.assignments[slot.id]?.ad).length;
   const maxTemplateCapacity = Math.max(...TEMPLATE_DEFS.map(templateCapacity), 1);
   const currentPageArticleTarget =
-    pagePlacedCount > 0 ? pagePlacedCount : Math.max(1, Math.min(unassignedArticles.length, maxTemplateCapacity));
+    pagePlacedCount > 0
+      ? pagePlacedCount
+      : Math.max(1, Math.min(unassignedArticles.length, maxTemplateCapacity));
   const filteredUnassignedArticles = unassignedArticles.filter((article) => {
-    const haystack = `${article.headline ?? ""} ${article.category ?? ""} ${article.summary ?? ""}`.toLowerCase();
+    const haystack =
+      `${article.headline ?? ""} ${article.category ?? ""} ${article.summary ?? ""}`.toLowerCase();
     return haystack.includes(articleSearch.trim().toLowerCase());
   });
+  const placedArticlePlacements = Object.entries(pageStates).flatMap(([pageNumber, pageState]) =>
+    Object.entries(pageState.assignments).flatMap(([slotId, assignment]) => {
+      if (!assignment.articleId) return [];
+      const article = articleById.get(assignment.articleId);
+      const slot = pageState.slots.find((item) => item.id === slotId);
+      if (!article || !slot) return [];
+
+      return [
+        {
+          article,
+          pageNumber: Number(pageNumber),
+          slotId,
+          slotLabel: slot.label,
+        },
+      ];
+    }),
+  );
 
   function commit(updater: (current: LayoutState) => LayoutState) {
     setPageStates((currentPages) => {
-      const current = currentPages[activePage] ?? createPageState(currentTemplate, articles, activePage);
+      const current =
+        currentPages[activePage] ?? createPageState(currentTemplate, articles, activePage);
       setPast((items) => [...items.slice(-19), current]);
       setFuture([]);
       return {
@@ -1152,7 +1346,8 @@ export function NewspaperLayoutEditor({
   function selectTemplate(templateId: string) {
     const template = TEMPLATE_DEFS.find((item) => item.id === templateId) ?? TEMPLATE_DEFS[0];
     setPageStates((currentPages) => {
-      const currentPage = currentPages[activePage] ?? createPageState(template, articles, activePage);
+      const currentPage =
+        currentPages[activePage] ?? createPageState(template, articles, activePage);
       const nextPages = {
         ...currentPages,
         [activePage]: applyTemplateToPage(currentPage, template),
@@ -1166,7 +1361,8 @@ export function NewspaperLayoutEditor({
   }
 
   function openPage(pageNumber: number) {
-    const nextState = pageStates[pageNumber] ?? createPageState(chooseTemplateForArticleCount(1), [], pageNumber);
+    const nextState =
+      pageStates[pageNumber] ?? createPageState(chooseTemplateForArticleCount(1), [], pageNumber);
     setPageStates((currentPages) => ({
       ...currentPages,
       [pageNumber]: currentPages[pageNumber] ?? nextState,
@@ -1181,7 +1377,9 @@ export function NewspaperLayoutEditor({
     setPageStates((currentPages) => {
       const currentPageNumbers = pageNumbersFor(currentPages);
       const nextPageNumber = Math.max(...currentPageNumbers) + 1;
-      const template = chooseTemplateForArticleCount(Math.max(1, Math.min(unassignedArticles.length, maxTemplateCapacity)));
+      const template = chooseTemplateForArticleCount(
+        Math.max(1, Math.min(unassignedArticles.length, maxTemplateCapacity)),
+      );
       const nextState = createPageState(template, [], nextPageNumber);
 
       setActivePage(nextPageNumber);
@@ -1200,7 +1398,9 @@ export function NewspaperLayoutEditor({
     if (pageNumbers.length <= 1) return;
 
     setPageStates((currentPages) => {
-      const remainingPageNumbers = pageNumbersFor(currentPages).filter((pageNumber) => pageNumber !== activePage);
+      const remainingPageNumbers = pageNumbersFor(currentPages).filter(
+        (pageNumber) => pageNumber !== activePage,
+      );
       const compactedPages = Object.fromEntries(
         remainingPageNumbers.map((pageNumber, index) => [index + 1, currentPages[pageNumber]]),
       ) as Record<number, LayoutState>;
@@ -1250,17 +1450,46 @@ export function NewspaperLayoutEditor({
 
   function addAdToSelectedBlock() {
     if (!selectedSlot || selectedIsHeaderQuote) return;
-    setAssignment(selectedSlot.id, {
-      ad: {
-        title: "Advertisement",
-        size: `${selectedSlot.w} columns x ${selectedSlot.h} rows`,
-        imageUrl: "",
-        subtitle: "",
-        contact: "",
-        note: "",
-      },
-    });
+    setAssignment(selectedSlot.id, emptyAdAssignment(selectedSlot));
     toast.success("Advertisement block added");
+  }
+
+  function convertSelectedAdToArticleBlock() {
+    if (!selectedSlot || selectedIsHeaderQuote) return;
+    commit((current) => {
+      const nextAssignments = { ...current.assignments };
+      delete nextAssignments[selectedSlot.id];
+
+      return {
+        ...current,
+        slots: current.slots.map((slot) =>
+          slot.id === selectedSlot.id ? asArticleSlot(slot) : slot,
+        ),
+        assignments: nextAssignments,
+      };
+    });
+    toast.success("Ad block converted to article space");
+  }
+
+  function deleteSelectedAdBlock() {
+    if (!selectedSlot || selectedIsHeaderQuote || selectedSlot.id === FRONT_PAGE_HEADER_AD_SLOT_ID)
+      return;
+
+    commit((current) => {
+      const nextAssignments = { ...current.assignments };
+      delete nextAssignments[selectedSlot.id];
+      const remainingSlots = current.slots.filter((slot) => slot.id !== selectedSlot.id);
+      const reflowedSlots = reflowSlotsIntoOpenSpace(remainingSlots, nextAssignments);
+
+      setSelectedSlotId(reflowedSlots.find((slot) => !slot.locked)?.id ?? "");
+
+      return {
+        ...current,
+        slots: reflowedSlots,
+        assignments: nextAssignments,
+      };
+    });
+    toast.success("Ad block deleted and layout reflowed");
   }
 
   function clearSelectedBlock() {
@@ -1270,6 +1499,9 @@ export function NewspaperLayoutEditor({
       delete nextAssignments[selectedSlot.id];
       return {
         ...current,
+        slots: current.slots.map((slot) =>
+          slot.id === selectedSlot.id && slot.kind === "ad" ? asArticleSlot(slot) : slot,
+        ),
         assignments: nextAssignments,
       };
     });
@@ -1332,6 +1564,34 @@ export function NewspaperLayoutEditor({
     toast.success("AI image placement optimized");
   }
 
+  function focusPlacedArticle(pageNumber: number, slotId: string) {
+    openPage(pageNumber);
+    setSelectedSlotId(slotId);
+  }
+
+  function removePlacedArticle(pageNumber: number, slotId: string) {
+    setPageStates((currentPages) => {
+      const pageState = currentPages[pageNumber];
+      if (!pageState) return currentPages;
+
+      setPast((items) => [...items.slice(-19), pageState]);
+      setFuture([]);
+
+      return {
+        ...currentPages,
+        [pageNumber]: {
+          ...pageState,
+          assignments: {
+            ...pageState.assignments,
+            [slotId]: {},
+          },
+        },
+      };
+    });
+    if (pageNumber === activePage) setSelectedSlotId(slotId);
+    toast.success("Article removed from paper");
+  }
+
   function onDragStart(event: DragStartEvent) {
     const id = String(event.active.id);
     if (id.startsWith("article:")) {
@@ -1370,20 +1630,26 @@ export function NewspaperLayoutEditor({
             },
           ]),
         ) as Record<number, LayoutState>;
-        const activePageState = nextPages[activePage] ?? createPageState(currentTemplate, articles, activePage);
+        const activePageState =
+          nextPages[activePage] ?? createPageState(currentTemplate, articles, activePage);
 
         setPast((items) => [...items.slice(-19), state]);
         setFuture([]);
 
+        const placedPageState = {
+          ...activePageState,
+          slots: activePageState.slots.map((slot) =>
+            slot.id === targetSlotId ? asArticleSlot(slot) : slot,
+          ),
+          assignments: {
+            ...activePageState.assignments,
+            [targetSlotId]: { articleId },
+          },
+        };
+
         return {
           ...nextPages,
-          [activePage]: {
-            ...activePageState,
-            assignments: {
-              ...activePageState.assignments,
-              [targetSlotId]: { articleId },
-            },
-          },
+          [activePage]: autoFitArticleSpace(placedPageState, articleById),
         };
       });
       setSelectedSlotId(targetSlotId);
@@ -1420,6 +1686,11 @@ export function NewspaperLayoutEditor({
       ...current,
       slots: current.slots.map((slot) => (slot.id === selectedSlot.id ? next : slot)),
     }));
+  }
+
+  function autoFitCurrentPage() {
+    commit((current) => autoFitArticleSpace(current, articleById));
+    toast.success("Article spaces auto fitted");
   }
 
   function moveSelected(direction: -1 | 1) {
@@ -1499,7 +1770,9 @@ export function NewspaperLayoutEditor({
 
       let priority = 100;
       for (const [pageNumber, pageState] of Object.entries(pageStates)) {
-        const orderedSlots = pageState.slots.filter((slot) => pageState.assignments[slot.id]?.articleId);
+        const orderedSlots = pageState.slots.filter(
+          (slot) => pageState.assignments[slot.id]?.articleId,
+        );
         for (const slot of orderedSlots) {
           const articleId = pageState.assignments[slot.id]?.articleId;
           if (!articleId) continue;
@@ -1524,27 +1797,34 @@ export function NewspaperLayoutEditor({
       queryClient.invalidateQueries({ queryKey: ["saved-layout", newspaperId] });
       toast.success("Custom layout saved");
     },
-    onError: (error: unknown) => toast.error(error instanceof Error ? error.message : "Could not save layout"),
+    onError: (error: unknown) =>
+      toast.error(error instanceof Error ? error.message : "Could not save layout"),
   });
 
   const updateArticle = useMutation({
     mutationFn: async (payload: { headline?: string; image_url?: string }) => {
       if (!selectedArticle) return;
-      const { error } = await supabase.from("articles").update(payload).eq("id", selectedArticle.id);
+      const { error } = await supabase
+        .from("articles")
+        .update(payload)
+        .eq("id", selectedArticle.id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["articles"] });
       toast.success("Article updated");
     },
-    onError: (error: unknown) => toast.error(error instanceof Error ? error.message : "Could not update article"),
+    onError: (error: unknown) =>
+      toast.error(error instanceof Error ? error.message : "Could not update article"),
   });
 
-  const canvasScale = previewMode === "mobile" ? 0.5 : previewMode === "pdf" ? 0.82 : 0.68;
+  const canvasScale = previewMode === "mobile" ? 0.56 : previewMode === "pdf" ? 0.9 : 0.76;
+  const headerAdAssignment = state.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID];
+  const hasHeaderAd = Boolean(headerAdAssignment?.ad);
 
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-      <div className="grid min-h-[760px] gap-4 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
+      <div className="grid min-h-[760px] gap-4 xl:grid-cols-[260px_minmax(0,1fr)_300px] 2xl:grid-cols-[320px_minmax(760px,1fr)_380px]">
         <aside className="min-h-0 rounded-lg border bg-card">
           <div className="border-b p-3">
             <div className="flex items-center gap-2 font-semibold">
@@ -1555,7 +1835,7 @@ export function NewspaperLayoutEditor({
               Each page can use its own template. Pick one that fits this page's article count.
             </p>
           </div>
-          <ScrollArea className="h-[686px]">
+          <ScrollArea className="h-[calc(100vh-238px)] min-h-[686px]">
             <div className="space-y-2 p-3">
               {TEMPLATE_DEFS.map((template) => {
                 const capacity = templateCapacity(template);
@@ -1571,7 +1851,9 @@ export function NewspaperLayoutEditor({
                     key={template.id}
                     type="button"
                     className={`w-full rounded-md border p-2 text-left transition ${
-                      state.templateId === template.id ? "border-primary bg-primary/5" : "hover:border-primary/50"
+                      state.templateId === template.id
+                        ? "border-primary bg-primary/5"
+                        : "hover:border-primary/50"
                     }`}
                     onClick={() => selectTemplate(template.id)}
                     disabled={!canEdit}
@@ -1591,7 +1873,9 @@ export function NewspaperLayoutEditor({
                         {fitLabel} - {capacity} stories
                       </span>
                     </div>
-                    <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{template.description}</div>
+                    <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      {template.description}
+                    </div>
                   </button>
                 );
               })}
@@ -1604,8 +1888,8 @@ export function NewspaperLayoutEditor({
             <div>
               <div className="text-sm font-semibold">Page layout</div>
               <div className="text-xs leading-relaxed text-muted-foreground">
-                Page {activePage} uses {currentTemplate.name}: {pagePlacedCount} of {pageCapacity} story spaces filled.
-                Add a new page when you need more room.
+                Page {activePage}: {pagePlacedCount} of {pageCapacity} story spaces filled. Add a
+                new page when you need more room.
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-1">
@@ -1625,7 +1909,13 @@ export function NewspaperLayoutEditor({
                   </button>
                 ))}
               </div>
-              <Button size="sm" variant="outline" onClick={addPage} disabled={!canEdit} title="Add new page">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={addPage}
+                disabled={!canEdit}
+                title="Add new page"
+              >
                 <Plus className="mr-1 h-4 w-4" />
                 New page
               </Button>
@@ -1654,23 +1944,45 @@ export function NewspaperLayoutEditor({
                   <Smartphone className="h-4 w-4" />
                 </ToggleGroupItem>
               </ToggleGroup>
-              <Button size="sm" variant="outline" onClick={undo} disabled={!past.length} title="Undo">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={undo}
+                disabled={!past.length}
+                title="Undo"
+              >
                 <Undo2 className="h-4 w-4" />
               </Button>
-              <Button size="sm" variant="outline" onClick={redo} disabled={!future.length} title="Redo">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={redo}
+                disabled={!future.length}
+                title="Redo"
+              >
                 <Redo2 className="h-4 w-4" />
               </Button>
-              <Button size="sm" variant="outline" onClick={resetLayout} disabled={!canEdit} title="Reset page">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={resetLayout}
+                disabled={!canEdit}
+                title="Reset page"
+              >
                 <RotateCcw className="h-4 w-4" />
               </Button>
-              <Button size="sm" onClick={() => saveLayout.mutate()} disabled={!canEdit || saveLayout.isPending}>
+              <Button
+                size="sm"
+                onClick={() => saveLayout.mutate()}
+                disabled={!canEdit || saveLayout.isPending}
+              >
                 <Save className="mr-1 h-4 w-4" />
                 Save
               </Button>
             </div>
           </div>
 
-          <div className="flex h-[760px] items-start justify-center overflow-hidden p-4">
+          <div className="flex h-[calc(100vh-238px)] min-h-[760px] items-start justify-center overflow-auto p-4">
             <div
               className="relative shrink-0"
               style={{
@@ -1687,74 +1999,82 @@ export function NewspaperLayoutEditor({
                 }}
               >
                 <div className="flex h-full flex-col p-6">
-                <div className="mb-3 border-b-4 border-double border-newsprint-ink pb-2">
-                  {activePage === 1 ? (
-                    <div
-                      className="grid items-stretch gap-3"
-                      style={{
-                        gridTemplateColumns: `repeat(${GRID_COLUMNS}, minmax(0, 1fr))`,
-                        gridTemplateRows: "86px",
-                      }}
-                    >
-                      <ArticleSlot
-                        slot={FRONT_PAGE_HEADER_AD_SLOT}
-                        assignment={state.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID]}
-                        selected={selectedSlot?.id === FRONT_PAGE_HEADER_AD_SLOT_ID}
-                        previewMode={previewMode}
-                        canEdit={canEdit}
-                        onSelect={() => setSelectedSlotId(FRONT_PAGE_HEADER_AD_SLOT_ID)}
-                        onUpdateAssignment={(nextAssignment) =>
-                          setAssignment(FRONT_PAGE_HEADER_AD_SLOT_ID, nextAssignment)
-                        }
-                      />
+                  <div className="mb-3 border-b-4 border-double border-newsprint-ink pb-2">
+                    {activePage === 1 ? (
                       <div
-                        className="flex flex-col items-center justify-center text-center"
-                        style={{ gridColumn: "4 / span 6", gridRow: "1 / span 1" }}
+                        className="grid items-stretch gap-3"
+                        style={{
+                          gridTemplateColumns: `repeat(${GRID_COLUMNS}, minmax(0, 1fr))`,
+                          gridTemplateRows: "86px",
+                        }}
                       >
-                        <PrajavaniLayoutMasthead />
+                        {hasHeaderAd && (
+                          <ArticleSlot
+                            slot={FRONT_PAGE_HEADER_AD_SLOT}
+                            assignment={headerAdAssignment}
+                            selected={selectedSlot?.id === FRONT_PAGE_HEADER_AD_SLOT_ID}
+                            previewMode={previewMode}
+                            canEdit={canEdit}
+                            onSelect={() => setSelectedSlotId(FRONT_PAGE_HEADER_AD_SLOT_ID)}
+                            onUpdateAssignment={(nextAssignment) =>
+                              setAssignment(FRONT_PAGE_HEADER_AD_SLOT_ID, nextAssignment)
+                            }
+                          />
+                        )}
+                        <div
+                          className="flex flex-col items-center justify-center text-center"
+                          style={{
+                            gridColumn: hasHeaderAd ? "4 / span 6" : "4 / span 9",
+                            gridRow: "1 / span 1",
+                          }}
+                        >
+                          <PrajavaniLayoutMasthead />
+                        </div>
+                        <HeaderQuoteBox
+                          quote={state.headerQuote ?? DEFAULT_HEADER_QUOTE}
+                          selected={selectedSlot?.id === FRONT_PAGE_HEADER_QUOTE_SLOT_ID}
+                          previewMode={previewMode}
+                          onSelect={() => setSelectedSlotId(FRONT_PAGE_HEADER_QUOTE_SLOT_ID)}
+                        />
                       </div>
-                      <HeaderQuoteBox
-                        quote={state.headerQuote ?? DEFAULT_HEADER_QUOTE}
-                        selected={selectedSlot?.id === FRONT_PAGE_HEADER_QUOTE_SLOT_ID}
-                        previewMode={previewMode}
-                        onSelect={() => setSelectedSlotId(FRONT_PAGE_HEADER_QUOTE_SLOT_ID)}
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.22em]">
-                      <span>Page {activePage}</span>
-                      <span>{currentTemplate.name}</span>
-                    </div>
-                  )}
-                </div>
-                <div
-                  className="grid min-h-0 flex-1"
-                  style={{
-                    gridTemplateColumns: `repeat(${GRID_COLUMNS}, minmax(0, ${state.columnScale / 100}fr))`,
-                    gridTemplateRows: `repeat(${GRID_ROWS}, minmax(0, ${state.rowScale / 100}fr))`,
-                    gap: state.gutter,
-                  }}
-                >
-                  {state.slots.map((slot) => {
-                    const assignment = state.assignments[slot.id];
-                    const article = assignment?.articleId ? articleById.get(assignment.articleId) : undefined;
-                    return (
-                      <ArticleSlot
-                        key={slot.id}
-                        slot={slot}
-                        assignment={assignment}
-                        article={article}
-                        selected={selectedSlot?.id === slot.id}
-                        previewMode={previewMode}
-                        canEdit={canEdit}
-                        onSelect={() => setSelectedSlotId(slot.id)}
-                        onUpdateAssignment={(nextAssignment) => setAssignment(slot.id, nextAssignment)}
-                      />
-                    );
-                  })}
+                    ) : (
+                      <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.22em]">
+                        <span>Page {activePage}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    className="grid min-h-0 flex-1"
+                    style={{
+                      gridTemplateColumns: `repeat(${GRID_COLUMNS}, minmax(0, ${state.columnScale / 100}fr))`,
+                      gridTemplateRows: `repeat(${GRID_ROWS}, minmax(0, ${state.rowScale / 100}fr))`,
+                      gap: state.gutter,
+                    }}
+                  >
+                    {state.slots.map((slot) => {
+                      const assignment = state.assignments[slot.id];
+                      const article = assignment?.articleId
+                        ? articleById.get(assignment.articleId)
+                        : undefined;
+                      return (
+                        <ArticleSlot
+                          key={slot.id}
+                          slot={slot}
+                          assignment={assignment}
+                          article={article}
+                          selected={selectedSlot?.id === slot.id}
+                          previewMode={previewMode}
+                          canEdit={canEdit}
+                          onSelect={() => setSelectedSlotId(slot.id)}
+                          onUpdateAssignment={(nextAssignment) =>
+                            setAssignment(slot.id, nextAssignment)
+                          }
+                        />
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
             </div>
           </div>
         </section>
@@ -1767,13 +2087,114 @@ export function NewspaperLayoutEditor({
             </p>
             <div className="mt-2 flex flex-wrap gap-1">
               <Badge variant="secondary">{articles.length} articles</Badge>
-              <Badge variant="secondary">{pageNumbers.length} pages</Badge>
-              <Badge variant="secondary">{unassignedArticles.length} unplaced</Badge>
+              <Badge variant="secondary">{placedArticlePlacements.length} on paper</Badge>
+              <Badge variant={unassignedArticles.length ? "default" : "secondary"}>
+                {unassignedArticles.length} not added
+              </Badge>
             </div>
           </div>
 
-          <ScrollArea className="h-[686px]">
+          <ScrollArea className="h-[calc(100vh-238px)] min-h-[686px]">
             <div className="space-y-5 p-3">
+              <section className="space-y-3">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                  <GripVertical className="h-3.5 w-3.5" />
+                  Article placement
+                </div>
+                <div className="rounded-md border bg-background p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold">Not added to paper</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        Drag an article onto any empty newspaper block.
+                      </div>
+                    </div>
+                    <Badge variant={unassignedArticles.length ? "default" : "secondary"}>
+                      {unassignedArticles.length}
+                    </Badge>
+                  </div>
+                  <div className="relative mt-2">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={articleSearch}
+                      onChange={(event) => setArticleSearch(event.target.value)}
+                      placeholder="Search articles"
+                      className="h-8 pl-7 text-xs"
+                    />
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {unassignedArticles.length === 0 ? (
+                      <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
+                        All articles are already on the paper.
+                      </div>
+                    ) : filteredUnassignedArticles.length === 0 ? (
+                      <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
+                        No articles match your search.
+                      </div>
+                    ) : (
+                      filteredUnassignedArticles.map((article) => (
+                        <DraggableArticleChip
+                          key={article.id}
+                          article={article}
+                          disabled={!canEdit}
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-md border bg-background p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold">Added on paper</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        Click an article to jump to its page block.
+                      </div>
+                    </div>
+                    <Badge variant="secondary">{placedArticlePlacements.length}</Badge>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {placedArticlePlacements.length === 0 ? (
+                      <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
+                        No articles are placed yet.
+                      </div>
+                    ) : (
+                      placedArticlePlacements.map(({ article, pageNumber, slotId, slotLabel }) => (
+                        <div
+                          key={`${pageNumber}-${slotId}`}
+                          className="rounded-md border bg-muted/30 p-2"
+                        >
+                          <button
+                            type="button"
+                            className="block w-full text-left"
+                            onClick={() => focusPlacedArticle(pageNumber, slotId)}
+                          >
+                            <div className="line-clamp-2 font-kannada text-xs font-semibold leading-snug">
+                              {article.headline || "Untitled article"}
+                            </div>
+                            <div className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                              Page {pageNumber} - {slotLabel}
+                            </div>
+                          </button>
+                          {canEdit && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="mt-2 h-7 w-full justify-start px-2 text-xs text-muted-foreground hover:text-destructive"
+                              onClick={() => removePlacedArticle(pageNumber, slotId)}
+                            >
+                              <Trash2 className="mr-1 h-3.5 w-3.5" />
+                              Remove from paper
+                            </Button>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </section>
+
               <section className="space-y-3">
                 <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
                   <Columns3 className="h-3.5 w-3.5" />
@@ -1786,7 +2207,9 @@ export function NewspaperLayoutEditor({
                     min={86}
                     max={114}
                     step={1}
-                    onValueChange={([value]) => commit((current) => ({ ...current, columnScale: value }))}
+                    onValueChange={([value]) =>
+                      commit((current) => ({ ...current, columnScale: value }))
+                    }
                     disabled={!canEdit}
                   />
                 </div>
@@ -1797,7 +2220,9 @@ export function NewspaperLayoutEditor({
                     min={86}
                     max={114}
                     step={1}
-                    onValueChange={([value]) => commit((current) => ({ ...current, rowScale: value }))}
+                    onValueChange={([value]) =>
+                      commit((current) => ({ ...current, rowScale: value }))
+                    }
                     disabled={!canEdit}
                   />
                 </div>
@@ -1808,10 +2233,22 @@ export function NewspaperLayoutEditor({
                     min={2}
                     max={14}
                     step={1}
-                    onValueChange={([value]) => commit((current) => ({ ...current, gutter: value }))}
+                    onValueChange={([value]) =>
+                      commit((current) => ({ ...current, gutter: value }))
+                    }
                     disabled={!canEdit}
                   />
                 </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full"
+                  onClick={autoFitCurrentPage}
+                  disabled={!canEdit || pagePlacedCount === 0}
+                >
+                  <Wand2 className="mr-1 h-3.5 w-3.5" />
+                  Auto fit article space
+                </Button>
               </section>
 
               <section className="space-y-3">
@@ -1824,10 +2261,13 @@ export function NewspaperLayoutEditor({
                     <div className="rounded-md border bg-background p-2">
                       <div className="text-sm font-semibold">{selectedSlot.label}</div>
                       <div className="mt-1 text-xs text-muted-foreground">
-                        {selectedSlot.kind} block - {selectedSlot.w} columns x {selectedSlot.h} rows
+                        {selectedAdIsMissing ? "article-ready ad space" : selectedSlot.kind} block -{" "}
+                        {selectedSlot.w} columns x {selectedSlot.h} rows
                       </div>
                       {selectedArticle && (
-                        <div className="mt-2 line-clamp-2 text-xs font-medium">{selectedArticle.headline}</div>
+                        <div className="mt-2 line-clamp-2 text-xs font-medium">
+                          {selectedArticle.headline}
+                        </div>
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -1898,9 +2338,17 @@ export function NewspaperLayoutEditor({
                           ),
                         }))
                       }
-                      disabled={!canEdit || selectedSlot.id === FRONT_PAGE_HEADER_AD_SLOT_ID || selectedIsHeaderQuote}
+                      disabled={
+                        !canEdit ||
+                        selectedSlot.id === FRONT_PAGE_HEADER_AD_SLOT_ID ||
+                        selectedIsHeaderQuote
+                      }
                     >
-                      {selectedSlot.locked ? <Unlock className="mr-2 h-4 w-4" /> : <Lock className="mr-2 h-4 w-4" />}
+                      {selectedSlot.locked ? (
+                        <Unlock className="mr-2 h-4 w-4" />
+                      ) : (
+                        <Lock className="mr-2 h-4 w-4" />
+                      )}
                       {selectedSlot.locked ? "Unlock section" : "Lock section"}
                     </Button>
                   </>
@@ -1951,6 +2399,33 @@ export function NewspaperLayoutEditor({
                     Clear block
                   </Button>
                 </div>
+                {selectedIsAdBlock && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={convertSelectedAdToArticleBlock}
+                      disabled={!canEdit || !selectedSlot || selectedIsHeaderQuote}
+                    >
+                      <Type className="mr-1 h-3.5 w-3.5" />
+                      Article block
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={deleteSelectedAdBlock}
+                      disabled={
+                        !canEdit ||
+                        !selectedSlot ||
+                        selectedIsHeaderQuote ||
+                        selectedSlot.id === FRONT_PAGE_HEADER_AD_SLOT_ID
+                      }
+                    >
+                      <Trash2 className="mr-1 h-3.5 w-3.5" />
+                      Delete ad
+                    </Button>
+                  </div>
+                )}
                 {selectedAssignment?.ad && (
                   <div className="space-y-2 rounded-md border bg-background p-2">
                     <div className="text-xs font-semibold">Advertisement details</div>
@@ -2047,7 +2522,9 @@ export function NewspaperLayoutEditor({
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2 text-xs">
                           <Label className="text-xs">Heading</Label>
-                          <span className="tabular-nums text-muted-foreground">{selectedTextTuning.headlineScale}%</span>
+                          <span className="tabular-nums text-muted-foreground">
+                            {selectedTextTuning.headlineScale}%
+                          </span>
                         </div>
                         <div className="grid grid-cols-[2rem_1fr_2rem] items-center gap-2">
                           <Button
@@ -2057,7 +2534,9 @@ export function NewspaperLayoutEditor({
                             className="h-8 px-0 text-xs"
                             aria-label="Decrease heading size"
                             onClick={() => changeSelectedTextScale("headlineScale", -5)}
-                            disabled={!canEdit || selectedTextTuning.headlineScale <= MIN_TEXT_SCALE}
+                            disabled={
+                              !canEdit || selectedTextTuning.headlineScale <= MIN_TEXT_SCALE
+                            }
                           >
                             A-
                           </Button>
@@ -2081,7 +2560,9 @@ export function NewspaperLayoutEditor({
                             className="h-8 px-0 text-xs"
                             aria-label="Increase heading size"
                             onClick={() => changeSelectedTextScale("headlineScale", 5)}
-                            disabled={!canEdit || selectedTextTuning.headlineScale >= MAX_TEXT_SCALE}
+                            disabled={
+                              !canEdit || selectedTextTuning.headlineScale >= MAX_TEXT_SCALE
+                            }
                           >
                             A+
                           </Button>
@@ -2090,7 +2571,9 @@ export function NewspaperLayoutEditor({
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2 text-xs">
                           <Label className="text-xs">Content</Label>
-                          <span className="tabular-nums text-muted-foreground">{selectedTextTuning.bodyScale}%</span>
+                          <span className="tabular-nums text-muted-foreground">
+                            {selectedTextTuning.bodyScale}%
+                          </span>
                         </div>
                         <div className="grid grid-cols-[2rem_1fr_2rem] items-center gap-2">
                           <Button
@@ -2137,7 +2620,9 @@ export function NewspaperLayoutEditor({
                         <Input
                           key={`image-${selectedArticle.id}`}
                           defaultValue={selectedArticle.image_url ?? ""}
-                          onBlur={(event) => updateArticle.mutate({ image_url: event.target.value })}
+                          onBlur={(event) =>
+                            updateArticle.mutate({ image_url: event.target.value })
+                          }
                           onKeyDown={(event) => {
                             if (event.key === "Enter") event.currentTarget.blur();
                           }}
@@ -2157,7 +2642,12 @@ export function NewspaperLayoutEditor({
                               Keeps the photo balanced with the surrounding text
                             </div>
                           </div>
-                          <Button size="sm" variant="outline" onClick={optimizeSelectedImage} disabled={!canEdit}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={optimizeSelectedImage}
+                            disabled={!canEdit}
+                          >
                             AI fit
                           </Button>
                         </div>
@@ -2173,7 +2663,10 @@ export function NewspaperLayoutEditor({
                                 updateSelectedImage({
                                   ...selectedImage,
                                   position,
-                                  widthPct: position === "full" ? 100 : clamp(selectedImage.widthPct, MIN_IMAGE_WIDTH_PCT, 88),
+                                  widthPct:
+                                    position === "full"
+                                      ? 100
+                                      : clamp(selectedImage.widthPct, MIN_IMAGE_WIDTH_PCT, 88),
                                 })
                               }
                               disabled={!canEdit}
@@ -2185,7 +2678,9 @@ export function NewspaperLayoutEditor({
                         <div className="space-y-2">
                           <div className="flex justify-between text-xs">
                             <Label className="text-xs">Image width</Label>
-                            <span className="text-muted-foreground">{Math.round(selectedImage.widthPct)}%</span>
+                            <span className="text-muted-foreground">
+                              {Math.round(selectedImage.widthPct)}%
+                            </span>
                           </div>
                           <Slider
                             value={[selectedImage.widthPct]}
@@ -2218,8 +2713,8 @@ export function NewspaperLayoutEditor({
                       </div>
                     )}
                     <div className="rounded-md border bg-background p-2 text-xs text-muted-foreground">
-                      The block automatically balances text size, image placement, spacing, and columns to keep the page
-                      clean.
+                      The block automatically balances text size, image placement, spacing, and
+                      columns to keep the page clean.
                     </div>
                   </>
                 ) : (
@@ -2227,53 +2722,6 @@ export function NewspaperLayoutEditor({
                     Select an article block on the page to edit its headline, image, and spacing.
                   </div>
                 )}
-              </section>
-
-              <section className="space-y-3">
-                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
-                  <GripVertical className="h-3.5 w-3.5" />
-                  Available articles
-                </div>
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={articleSearch}
-                    onChange={(event) => setArticleSearch(event.target.value)}
-                    placeholder="Search headline or category"
-                    className="h-8 pl-7 text-xs"
-                  />
-                </div>
-                <Select
-                  value={selectedSlot?.id}
-                  onValueChange={(value) => setSelectedSlotId(value)}
-                  disabled={!selectedSlot}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {state.slots.map((slot) => (
-                      <SelectItem key={slot.id} value={slot.id}>
-                        {slot.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="space-y-2">
-                  {unassignedArticles.length === 0 ? (
-                    <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
-                      All articles are placed on the pages.
-                    </div>
-                  ) : filteredUnassignedArticles.length === 0 ? (
-                    <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
-                      No articles match your search.
-                    </div>
-                  ) : (
-                    filteredUnassignedArticles.map((article) => (
-                      <DraggableArticleChip key={article.id} article={article} disabled={!canEdit} />
-                    ))
-                  )}
-                </div>
               </section>
             </div>
           </ScrollArea>

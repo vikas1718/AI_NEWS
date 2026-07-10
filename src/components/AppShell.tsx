@@ -1,5 +1,15 @@
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Newspaper, FileCheck2, Cpu, Info, LogOut, Menu, X } from "lucide-react";
+import {
+  LayoutDashboard,
+  Newspaper,
+  FileCheck2,
+  Cpu,
+  Info,
+  LogOut,
+  Menu,
+  Wand2,
+  X,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,10 +23,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   const role = ctx.role;
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const isEditionWorkspace = pathname.startsWith("/editions/");
 
   const items = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: true },
-    { to: "/editions", label: role === "editor" ? "My Editions" : "Editions", icon: Newspaper, show: true },
+    {
+      to: "/editions",
+      label: role === "editor" ? "My Editions" : "Editions",
+      icon: Newspaper,
+      show: true,
+    },
+    { to: "/ai-generate-layout", label: "AI Generate Layout", icon: Wand2, show: true },
     { to: "/review", label: "Review Queue", icon: FileCheck2, show: role === "chief_editor" },
     { to: "/pipeline", label: "AI Pipeline", icon: Cpu, show: true },
     { to: "/about", label: "About Workflow", icon: Info, show: true },
@@ -58,7 +75,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
       <nav className="flex-1 px-2 py-4">
         {items.map((it) => {
-          const active = pathname === it.to || (it.to !== "/dashboard" && pathname.startsWith(it.to));
+          const active =
+            pathname === it.to || (it.to !== "/dashboard" && pathname.startsWith(it.to));
           return (
             <Link
               key={it.to}
@@ -79,7 +97,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="border-t border-sidebar-border p-3 text-xs">
         <div className="mb-2 px-2">
           <div className="truncate font-medium">{ctx.user.email}</div>
-          <div className="text-sidebar-foreground/60">{role === "chief_editor" ? "Chief Editor" : "Editor"}</div>
+          <div className="text-sidebar-foreground/60">
+            {role === "chief_editor" ? "Chief Editor" : "Editor"}
+          </div>
         </div>
         <button
           type="button"
@@ -142,7 +162,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
         </header>
-        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">{children}</div>
+        <div
+          className={cn(
+            "mx-auto px-4 py-6 sm:px-6 sm:py-8",
+            isEditionWorkspace ? "w-full max-w-[1920px] 2xl:px-8" : "max-w-7xl",
+          )}
+        >
+          {children}
+        </div>
       </main>
     </div>
   );

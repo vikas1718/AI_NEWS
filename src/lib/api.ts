@@ -44,10 +44,29 @@ type ImageArticlePayload = Partial<Article> & {
   prompt?: string;
 };
 
+type JsonObject = Record<string, unknown>;
+
+type GeneratedLayoutItem = {
+  article_id: string;
+  page_number: number;
+  position: string;
+  headline_size: string;
+  image_size: string;
+  column_count: number;
+};
+
+export type ProcessArticleOptions = {
+  targetWordLimit?: number;
+};
+
 const FN_URL = (name: string) =>
   `${import.meta.env.VITE_BACKEND_URL ?? import.meta.env.VITE_SUPABASE_URL}/functions/v1/${name}`;
 
-async function callFn<T = any>(name: string, body: any): Promise<T> {
+function isJsonObject(value: unknown): value is JsonObject {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+async function callFn<T = unknown>(name: string, body: unknown): Promise<T> {
   const { data: sess } = await supabase.auth.getSession();
   const token = sess.session?.access_token;
   const res = await fetch(FN_URL(name), {
@@ -59,28 +78,40 @@ async function callFn<T = any>(name: string, body: any): Promise<T> {
     },
     body: JSON.stringify(body),
   });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json?.error ?? `fn ${name} failed`);
-  return json;
+  const raw = await res.text();
+  let json: unknown = {};
+  try {
+    json = raw ? JSON.parse(raw) : {};
+  } catch {
+    json = { error: raw };
+  }
+  if (!res.ok) {
+    const errorPayload = isJsonObject(json) ? json : {};
+    const detail = [errorPayload.error, errorPayload.detail]
+      .filter((part) => typeof part === "string" && part.trim())
+      .join(": ");
+    throw new Error(detail || `fn ${name} failed with HTTP ${res.status}`);
+  }
+  return json as T;
 }
 
 export const aiFn = {
   ocr: (payload: { fileUrl?: string; inputType?: string; fileName?: string; mimeType?: string }) =>
     callFn<{ ocr_text: string; simulated: boolean }>("process-ocr", payload),
-  process: (text: string) =>
+  process: (text: string, options: ProcessArticleOptions = {}) =>
     callFn<{
       corrected_text: string;
       headline: string;
       summary: string;
       category: ArticleCategory;
       priority_score: number;
-    }>("process-article-ai", { text }),
+    }>("process-article-ai", { text, targetWordLimit: options.targetWordLimit ?? 250 }),
   image: (payload: string | Partial<Article>) =>
     callFn<{ image_url: string }>(
       "generate-image",
       typeof payload === "string" ? { prompt: payload } : { article: payload },
     ),
   layout: (articles: Article[], number_of_pages: number) =>
-    callFn<{ layout: any[] }>("generate-layout", { articles, number_of_pages }),
+    callFn<{ layout: GeneratedLayoutItem[] }>("generate-layout", { articles, number_of_pages }),
   tts: (text: string) => callFn<{ audio_url: string; simulated: boolean }>("tts-kannada", { text }),
 };
