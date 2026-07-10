@@ -15,7 +15,6 @@ import {
   Columns3,
   FileDown,
   GripVertical,
-  Image,
   LayoutTemplate,
   Lock,
   Maximize2,
@@ -2612,25 +2611,6 @@ export function NewspaperLayoutEditor({
                             A+
                           </Button>
                         </div>
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Image URL</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          key={`image-${selectedArticle.id}`}
-                          defaultValue={selectedArticle.image_url ?? ""}
-                          onBlur={(event) =>
-                            updateArticle.mutate({ image_url: event.target.value })
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") event.currentTarget.blur();
-                          }}
-                          disabled={!canEdit}
-                        />
-                        <Button size="icon" variant="outline" disabled>
-                          <Image className="h-4 w-4" />
-                        </Button>
                       </div>
                     </div>
                     {selectedArticle.image_url && selectedImage && (
