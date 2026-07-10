@@ -11,6 +11,7 @@ export interface Newspaper {
   edition_date: string;
   language: string;
   number_of_pages: number;
+  organization_id: string | null;
   template: string;
   status: NewspaperStatus;
   created_by: string;
@@ -44,17 +45,29 @@ type ImageArticlePayload = Partial<Article> & {
   prompt?: string;
 };
 
-const FN_URL = (name: string) =>
-  `${import.meta.env.VITE_BACKEND_URL ?? import.meta.env.VITE_SUPABASE_URL}/functions/v1/${name}`;
+export interface LayoutPlanItem {
+  article_id: string;
+  page_number: number;
+  position: string;
+  headline_size: string;
+  image_size: string;
+  column_count: number;
+  slot_index?: number;
+}
 
-async function callFn<T = any>(name: string, body: any): Promise<T> {
+const BACKEND_URL = (
+  (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? "http://127.0.0.1:8000"
+).replace(/\/$/, "");
+
+const FN_URL = (name: string) => `${BACKEND_URL}/functions/v1/${name}`;
+
+async function callFn<T = unknown>(name: string, body: unknown): Promise<T> {
   const { data: sess } = await supabase.auth.getSession();
   const token = sess.session?.access_token;
   const res = await fetch(FN_URL(name), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
@@ -81,6 +94,6 @@ export const aiFn = {
       typeof payload === "string" ? { prompt: payload } : { article: payload },
     ),
   layout: (articles: Article[], number_of_pages: number) =>
-    callFn<{ layout: any[] }>("generate-layout", { articles, number_of_pages }),
+    callFn<{ layout: LayoutPlanItem[] }>("generate-layout", { articles, number_of_pages }),
   tts: (text: string) => callFn<{ audio_url: string; simulated: boolean }>("tts-kannada", { text }),
 };

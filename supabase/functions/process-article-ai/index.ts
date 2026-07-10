@@ -5,6 +5,36 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+async function requireAuthenticated(req: Request) {
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+
+  if (!authHeader.startsWith("Bearer ")) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: corsHeaders,
+    });
+  }
+  if (!supabaseUrl || !anonKey) {
+    return new Response(JSON.stringify({ error: "auth_config_missing" }), {
+      status: 500,
+      headers: corsHeaders,
+    });
+  }
+
+  const authResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { Authorization: authHeader, apikey: anonKey },
+  });
+  if (!authResp.ok) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: corsHeaders,
+    });
+  }
+  return null;
+}
+
 const SYSTEM = `You are an expert Kannada newspaper editor and translator.
 The input may be English, Kannada, mixed-language, or noisy OCR from an image/PDF/scan.
 
@@ -41,9 +71,23 @@ function hasKannadaText(text: string) {
   return countKannadaChars(text) >= 5;
 }
 
+type AiArticleResult = {
+  corrected_text?: unknown;
+  headline?: unknown;
+  summary?: unknown;
+  category?: unknown;
+  priority_score?: unknown;
+  error?: string;
+  raw?: unknown;
+  [key: string]: unknown;
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
+    const authError = await requireAuthenticated(req);
+    if (authError) return authError;
+
     const { text } = await req.json();
     if (!text) throw new Error("text required");
     const apiKey = Deno.env.get("LOVABLE_API_KEY");
@@ -61,16 +105,31 @@ Deno.serve(async (req) => {
         response_format: { type: "json_object" },
       }),
     });
-    if (resp.status === 429) return new Response(JSON.stringify({ error: "rate_limited" }), { status: 429, headers: corsHeaders });
-    if (resp.status === 402) return new Response(JSON.stringify({ error: "credits_exhausted" }), { status: 402, headers: corsHeaders });
+    if (resp.status === 429)
+      return new Response(JSON.stringify({ error: "rate_limited" }), {
+        status: 429,
+        headers: corsHeaders,
+      });
+    if (resp.status === 402)
+      return new Response(JSON.stringify({ error: "credits_exhausted" }), {
+        status: 402,
+        headers: corsHeaders,
+      });
     if (!resp.ok) {
       const body = await resp.text();
-      return new Response(JSON.stringify({ error: "ai_failed", detail: body }), { status: 500, headers: corsHeaders });
+      return new Response(JSON.stringify({ error: "ai_failed", detail: body }), {
+        status: 500,
+        headers: corsHeaders,
+      });
     }
     const data = await resp.json();
     const content = data.choices?.[0]?.message?.content ?? "{}";
-    let parsed: any;
-    try { parsed = JSON.parse(content); } catch { parsed = { error: "parse_failed", raw: content }; }
+    let parsed: AiArticleResult;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      parsed = { error: "parse_failed", raw: content };
+    }
 
     // clamp priority score
     if (typeof parsed.priority_score === "number") {
@@ -78,8 +137,19 @@ Deno.serve(async (req) => {
     } else {
       parsed.priority_score = 50;
     }
-    const validCats = ["Politics","Sports","Crime","Agriculture","Education","Cinema","Business","Other"];
-    if (!validCats.includes(parsed.category)) parsed.category = "Other";
+    const validCats = [
+      "Politics",
+      "Sports",
+      "Crime",
+      "Agriculture",
+      "Education",
+      "Cinema",
+      "Business",
+      "Other",
+    ];
+    if (typeof parsed.category !== "string" || !validCats.includes(parsed.category)) {
+      parsed.category = "Other";
+    }
     if (needsKannadaTranslation(text) && !hasKannadaText(String(parsed.corrected_text ?? ""))) {
       return new Response(
         JSON.stringify({ error: "translation_failed", detail: "AI returned non-Kannada text" }),
@@ -87,8 +157,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    return new Response(JSON.stringify(parsed), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify(parsed), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: corsHeaders });
+    return new Response(JSON.stringify({ error: String(e) }), {
+      status: 500,
+      headers: corsHeaders,
+    });
   }
 });
