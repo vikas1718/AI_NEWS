@@ -1,4 +1,4 @@
-import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useRouteContext, useRouterState } from "@tanstack/react-router";
 import { LayoutDashboard, Newspaper, FileCheck2, LogOut, Menu, Share2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -12,6 +12,7 @@ type NavRoute =
 
 export function AppShell({ children }: { children: ReactNode }) {
   const ctx = useRouteContext({ from: "/_authenticated" });
+  const role = ctx.role;
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(true);
