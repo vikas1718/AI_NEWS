@@ -1,15 +1,5 @@
-import { Link, useNavigate, useRouteContext, useRouterState } from "@tanstack/react-router";
-import {
-  Building2,
-  FileCheck2,
-  LayoutDashboard,
-  LogOut,
-  Menu,
-  Newspaper,
-  UserRound,
-  Users,
-  X,
-} from "lucide-react";
+import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
+import { LayoutDashboard, Newspaper, FileCheck2, LogOut, Menu, Share2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
@@ -36,21 +26,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     show: boolean;
   }> = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: true },
-    { to: "/editions", label: "Editions", icon: Newspaper, show: can("access_assigned_pages") },
-    { to: "/review", label: "Review Queue", icon: FileCheck2, show: can("review_articles") },
-    {
-      to: "/team",
-      label: ctx.organization ? "Team" : "Create Team",
-      icon: Users,
-      show: !ctx.organization || can("manage_team"),
-    },
-    { to: "/settings", label: "Settings", icon: UserRound, show: true },
-    {
-      to: "/organization-settings",
-      label: "Organization Settings",
-      icon: Building2,
-      show: can("organization_settings"),
-    },
+    { to: "/editions", label: role === "editor" ? "My Editions" : "Editions", icon: Newspaper, show: true },
+    { to: "/multiplatform/instagram", label: "Multiplatform", icon: Share2, show: true },
+    { to: "/review", label: "Review Queue", icon: FileCheck2, show: role === "chief_editor" },
   ].filter((x) => x.show);
 
   async function signOut() {
