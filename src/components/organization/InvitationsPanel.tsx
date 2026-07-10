@@ -12,6 +12,7 @@ import {
   getPendingInvitationsBackend,
 } from "@/lib/organization-backend";
 import { roleLabels, type OrganizationRole } from "@/lib/rbac";
+import { supabaseUntyped } from "@/lib/supabase-untyped";
 
 type Invitation = {
   id: string;
@@ -21,10 +22,12 @@ type Invitation = {
   created_at: string;
   organizations: { name: string } | null;
   inviter: { full_name: string | null; email: string } | null;
+  source: "database" | "local";
 };
 
 export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
   const { user } = useRouteContext({ from: "/_authenticated" });
+  const db = supabaseUntyped;
   const qc = useQueryClient();
   const router = useRouter();
   const navigate = useNavigate();
@@ -34,12 +37,32 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
 
   const { data: invitations = [], isLoading } = useQuery({
     queryKey: ["organization-invitations", user.id],
-    queryFn: async () => (await getPendingInvitations()) as Invitation[],
+    queryFn: async () => {
+      const [databaseInvitations, localInvitations] = await Promise.all([
+        getDatabasePendingInvitations(db, user.id, user.email ?? null),
+        getPendingInvitations().catch(() => []),
+      ]);
+
+      const merged = new Map<string, Invitation>();
+      for (const invitation of databaseInvitations) merged.set(invitation.id, invitation);
+      for (const invitation of localInvitations as Omit<Invitation, "source">[]) {
+        merged.set(invitation.id, { ...invitation, source: "local" });
+      }
+      return Array.from(merged.values()).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    },
   });
 
   const accept = useMutation({
-    mutationFn: async (id: string) => {
-      const result = await acceptInvitation({ data: { invitationId: id } });
+    mutationFn: async (invitation: Invitation) => {
+      if (invitation.source === "database") {
+        const { error } = await db.rpc("accept_organization_invitation", {
+          p_invitation_id: invitation.id,
+        });
+        if (error) throw error;
+        return;
+      }
+
+      const result = await acceptInvitation({ data: { invitationId: invitation.id } });
       if (!result.ok) throw new Error(result.error);
     },
     onSuccess: async () => {
@@ -53,8 +76,16 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
   });
 
   const decline = useMutation({
-    mutationFn: async (id: string) => {
-      const result = await declineInvitation({ data: { invitationId: id } });
+    mutationFn: async (invitation: Invitation) => {
+      if (invitation.source === "database") {
+        const { error } = await db.rpc("decline_organization_invitation", {
+          p_invitation_id: invitation.id,
+        });
+        if (error) throw error;
+        return;
+      }
+
+      const result = await declineInvitation({ data: { invitationId: invitation.id } });
       if (!result.ok) throw new Error(result.error);
     },
     onSuccess: async () => {
@@ -116,7 +147,7 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
             <div className="flex shrink-0 gap-2">
               <Button
                 size="sm"
-                onClick={() => accept.mutate(invitation.id)}
+                onClick={() => accept.mutate(invitation)}
                 disabled={accept.isPending || decline.isPending}
               >
                 <Check className="h-4 w-4" />
@@ -125,7 +156,7 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => decline.mutate(invitation.id)}
+                onClick={() => decline.mutate(invitation)}
                 disabled={accept.isPending || decline.isPending}
               >
                 <X className="h-4 w-4" />
@@ -136,5 +167,101 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
         ))}
       </div>
     </Card>
+  );
+}
+
+async function getDatabasePendingInvitations(
+  db: typeof supabaseUntyped,
+  userId: string,
+  email: string | null,
+): Promise<Invitation[]> {
+  const normalizedEmail = email?.trim().toLowerCase();
+  const fields = "id,email,role,status,created_at,organization_id,invited_by";
+  const query = db.from("organization_invitations").select(fields).eq("status", "pending");
+  const filteredQuery = normalizedEmail
+    ? query.or(`invitee_user_id.eq.${userId},email.eq.${normalizedEmail}`)
+    : query.eq("invitee_user_id", userId);
+
+  const { data, error } = await filteredQuery.order("created_at", { ascending: false });
+  if (error) {
+    if (isMissingOrganizationSchemaError(error)) return [];
+    throw error;
+  }
+
+  const rows = data ?? [];
+  if (rows.length === 0) return [];
+
+  const organizationIds = uniqueStrings(
+    rows.map((row: DatabaseInvitationRow) => row.organization_id),
+  );
+  const inviterIds = uniqueStrings(rows.map((row: DatabaseInvitationRow) => row.invited_by));
+  const [organizations, profiles] = await Promise.all([
+    getOrganizationNames(db, organizationIds),
+    getInviterProfiles(db, inviterIds),
+  ]);
+
+  return rows.map((row: DatabaseInvitationRow) => ({
+    id: row.id,
+    email: row.email,
+    role: row.role,
+    status: row.status,
+    created_at: row.created_at,
+    organizations: organizations.get(row.organization_id) ?? null,
+    inviter: profiles.get(row.invited_by) ?? null,
+    source: "database",
+  }));
+}
+
+type DatabaseInvitationRow = {
+  id: string;
+  email: string;
+  role: OrganizationRole;
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  created_at: string;
+  organization_id: string;
+  invited_by: string;
+};
+
+async function getOrganizationNames(db: typeof supabaseUntyped, ids: string[]) {
+  const organizations = new Map<string, { name: string }>();
+  if (ids.length === 0) return organizations;
+
+  const { data, error } = await db.from("organizations").select("id,name").in("id", ids);
+  if (error) {
+    if (isMissingOrganizationSchemaError(error)) return organizations;
+    throw error;
+  }
+
+  for (const row of data ?? []) {
+    organizations.set(row.id, { name: row.name });
+  }
+  return organizations;
+}
+
+async function getInviterProfiles(db: typeof supabaseUntyped, ids: string[]) {
+  const profiles = new Map<string, { full_name: string | null; email: string }>();
+  if (ids.length === 0) return profiles;
+
+  const { data, error } = await db.from("profiles").select("id,full_name,email").in("id", ids);
+  if (error) throw error;
+
+  for (const row of data ?? []) {
+    profiles.set(row.id, { full_name: row.full_name, email: row.email });
+  }
+  return profiles;
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+}
+
+function isMissingOrganizationSchemaError(error: unknown) {
+  if (!error || typeof error !== "object" || !("message" in error)) return false;
+  const message = String(error.message).toLowerCase();
+  return (
+    message.includes("schema cache") &&
+    (message.includes("organization_members") ||
+      message.includes("organization_invitations") ||
+      message.includes("role_permissions"))
   );
 }
