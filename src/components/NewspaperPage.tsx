@@ -93,8 +93,11 @@ export function paginatePrintArticles(articles: Article[]) {
         id: `${article.id}-print-${chunkIndex}`,
         page_number: page,
         position: isLeadSlot ? "top" : article.position,
-        headline_size:
-          isLeadSlot ? "big" : article.headline_size === "big" ? "medium" : article.headline_size,
+        headline_size: isLeadSlot
+          ? "big"
+          : article.headline_size === "big"
+            ? "medium"
+            : article.headline_size,
         image_url: continued ? null : article.image_url,
         summary: continued ? null : article.summary,
         print_id: article.id,
@@ -120,27 +123,20 @@ export function getPrintPageCount(articles: Article[], minimumPages = 1) {
   return Math.max(minimumPages, ...Array.from(pages.keys()), 1);
 }
 
-function PrajavaniMasthead() {
+function AiNewsMasthead() {
   return (
     <div className="select-none text-newsprint-ink">
       <div className="grid grid-cols-[1fr_auto_1fr] items-end leading-none">
-        <span className="text-right font-kannada-serif text-[56px] font-black leading-none tracking-normal sm:text-[74px]">
-          ಪ್ರಜಾ
-        </span>
+        <span className="hidden">ಪ್ರಜಾ</span>
         <div className="mb-1 flex w-28 justify-center sm:w-36">
-          <img
-            src="/prajavani-nandi.png"
-            alt=""
-            className="h-12 w-28 object-contain sm:h-14 sm:w-36"
-          />
+          <span className="font-serif text-[34px] font-black leading-none">AI News</span>
         </div>
-        <span className="text-left font-kannada-serif text-[56px] font-black leading-none tracking-normal sm:text-[74px]">
-          ವಾಣಿ
-        </span>
+        <span className="hidden">ವಾಣಿ</span>
       </div>
-      <div className="-mt-1 font-kannada text-[10px] font-semibold leading-none tracking-wide">
-        ಆತ್ಮ ವಿಶ್ವಾಸದ ಕನ್ನಡ ದಿನಪತ್ರಿಕೆ
+      <div className="mt-1 text-[10px] font-semibold leading-none tracking-wide">
+        AI News Studio
       </div>
+      <div className="hidden">ಆತ್ಮ ವಿಶ್ವಾಸದ ಕನ್ನಡ ದಿನಪತ್ರಿಕೆ</div>
     </div>
   );
 }
@@ -171,7 +167,14 @@ function articleBackgroundStyle(article: Article): CSSProperties | undefined {
 }
 
 function articleText(article: PrintArticle) {
-  return article.print_text ?? article.corrected_text ?? article.summary ?? article.ocr_text ?? article.raw_text ?? "";
+  return (
+    article.print_text ??
+    article.corrected_text ??
+    article.summary ??
+    article.ocr_text ??
+    article.raw_text ??
+    ""
+  );
 }
 
 export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: Props) {
@@ -196,7 +199,7 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
       >
         {pageNumber === 1 ? (
           <div className="mb-3 shrink-0 border-b-4 border-double border-newsprint-ink pb-3 text-center">
-            <PrajavaniMasthead />
+            <AiNewsMasthead />
             <div className="mt-2 flex justify-between border-t border-newsprint-rule pt-1 text-[10px] uppercase tracking-widest">
               <span>{newspaper.language}</span>
               <span>{new Date(newspaper.edition_date).toDateString()}</span>
@@ -237,11 +240,7 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
             <div className="mt-2 grid grid-cols-3 gap-3">
               {lead.image_url && (
                 <div className="col-span-3">
-                  <img
-                    src={lead.image_url}
-                    alt=""
-                    className="h-36 w-full object-cover"
-                  />
+                  <img src={lead.image_url} alt="" className="h-36 w-full object-cover" />
                   <div className="text-[9px] italic opacity-70">Photo caption</div>
                 </div>
               )}
@@ -273,11 +272,7 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
                   {article.headline}
                 </h3>
                 {article.image_url && (
-                  <img
-                    src={article.image_url}
-                    alt=""
-                    className="mt-1.5 h-20 w-full object-cover"
-                  />
+                  <img src={article.image_url} alt="" className="mt-1.5 h-20 w-full object-cover" />
                 )}
                 <p
                   className={`mt-1 font-kannada ${bodyTextClass(text)}`}
