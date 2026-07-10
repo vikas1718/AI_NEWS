@@ -93,7 +93,11 @@ export const Route = createFileRoute("/_authenticated")({
       }
     }
 
-    const pendingInvitationCount = await getPendingInvitationCountBackend().catch(() => 0);
+    const [databasePendingInvitationCount, localPendingInvitationCount] = await Promise.all([
+      getDatabasePendingInvitationCount(db, user.id, user.email ?? null),
+      getPendingInvitationCountBackend().catch(() => 0),
+    ]);
+    const pendingInvitationCount = databasePendingInvitationCount + localPendingInvitationCount;
 
     const pathname = location.pathname;
     const isOnboarding = pathname === "/onboarding";
@@ -121,6 +125,28 @@ function isMissingOrganizationSchemaError(error: unknown) {
       message.includes("organization_invitations") ||
       message.includes("role_permissions"))
   );
+}
+
+async function getDatabasePendingInvitationCount(
+  db: typeof supabaseUntyped,
+  userId: string,
+  email: string | null,
+) {
+  const normalizedEmail = email?.trim().toLowerCase();
+  const query = db
+    .from("organization_invitations")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending");
+  const filteredQuery = normalizedEmail
+    ? query.or(`invitee_user_id.eq.${userId},email.eq.${normalizedEmail}`)
+    : query.eq("invitee_user_id", userId);
+
+  const { count, error } = await filteredQuery;
+  if (error) {
+    if (isMissingOrganizationSchemaError(error)) return 0;
+    throw error;
+  }
+  return count ?? 0;
 }
 
 function AuthenticatedLayout() {
