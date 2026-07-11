@@ -3,6 +3,8 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   AlertTriangle,
   Building2,
+  Check,
+  Crown,
   Eye,
   EyeOff,
   LockKeyhole,
@@ -33,7 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { supabase } from "@/integrations/supabase/client";
-import { deleteAccountBackend, leaveOrganizationBackend } from "@/lib/organization-backend";
+import { deleteAccountBackend } from "@/lib/organization-backend";
 import { roleLabels } from "@/lib/rbac";
 import { supabaseUntyped } from "@/lib/supabase-untyped";
 import { getStoredThemePreference, storeThemePreference, type ThemePreference } from "@/lib/theme";
@@ -47,7 +49,6 @@ function SettingsPage() {
   const router = useRouter();
   const navigate = useNavigate();
   const db = supabaseUntyped;
-  const leaveLocalOrganization = useServerFn(leaveOrganizationBackend);
   const deleteAccountServer = useServerFn(deleteAccountBackend);
   const [profileSaving, setProfileSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
@@ -70,7 +71,6 @@ function SettingsPage() {
 
   const organization = ctx.organization;
   const membership = ctx.membership;
-  const isLocalOrganization = organization?.id.startsWith("local_") ?? false;
   const accountEmail = ctx.user.email ?? ctx.profile?.email ?? "";
 
   useEffect(() => {
@@ -149,13 +149,9 @@ function SettingsPage() {
 
     setLeaving(true);
     try {
-      if (isLocalOrganization) {
-        const result = await leaveLocalOrganization();
-        if (!result.ok) throw new Error(result.error);
-      } else {
-        const { error } = await db.rpc("leave_organization", { p_member_id: membership.id });
-        if (error) throw error;
-      }
+      const { error } = await db.rpc("leave_organization", { p_member_id: membership.id });
+      if (error) throw error;
+      window.localStorage.removeItem("ai-news-active-organization-id");
 
       await router.invalidate();
       toast.success(`You left ${organization.name}.`);
@@ -165,6 +161,13 @@ function SettingsPage() {
     } finally {
       setLeaving(false);
     }
+  }
+
+  async function switchOrganization(organizationId: string) {
+    window.localStorage.setItem("ai-news-active-organization-id", organizationId);
+    await router.invalidate();
+    toast.success("Organization switched.");
+    navigate({ to: "/dashboard" });
   }
 
   async function deleteAccount() {
@@ -304,15 +307,69 @@ function SettingsPage() {
 
         <div className="space-y-6">
           <Card className="rounded-lg p-6">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Building2 className="h-4 w-4 text-primary" />
-              Organization
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Building2 className="h-4 w-4 text-primary" />
+                Organization
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Switch between organizations. Your access follows your role in the selected
+                workspace.
+              </p>
             </div>
-            {organization && membership ? (
-              <div className="mt-4 space-y-3 text-sm">
-                <Info label="Workspace" value={organization.name} />
-                <Info label="Role" value={roleLabels[membership.role]} />
-                <Info label="Joined" value={new Date(membership.joined_at).toLocaleDateString()} />
+            {ctx.organizations.length > 0 ? (
+              <div className="mt-4 space-y-2">
+                {ctx.organizations.map((item) => {
+                  const active = item.organization.id === organization?.id;
+                  const isOwner = item.membership.role === "owner";
+
+                  return (
+                    <button
+                      key={item.organization.id}
+                      type="button"
+                      onClick={() => void switchOrganization(item.organization.id)}
+                      disabled={active}
+                      className={`flex w-full items-center gap-3 rounded-lg border p-3 text-left transition ${
+                        active
+                          ? "border-primary bg-primary/10 text-foreground"
+                          : "bg-background hover:border-primary/50 hover:bg-accent/40"
+                      }`}
+                    >
+                      <span
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                          active ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        <Building2 className="h-5 w-5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-2">
+                          <span className="truncate font-semibold">{item.organization.name}</span>
+                          {isOwner && (
+                            <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold uppercase text-amber-600">
+                              <Crown className="h-3 w-3" />
+                              Owner
+                            </span>
+                          )}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {active
+                            ? "Active organization"
+                            : `Switch as ${roleLabels[item.membership.role]}`}
+                        </span>
+                      </span>
+                      {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                    </button>
+                  );
+                })}
+                {organization && membership && (
+                  <div className="pt-2 text-xs text-muted-foreground">
+                    Current role: {roleLabels[membership.role]}.{" "}
+                    {membership.role === "owner"
+                      ? "You have full organization privileges here."
+                      : "Owner-only organization settings and team controls are restricted here."}
+                  </div>
+                )}
               </div>
             ) : (
               <p className="mt-3 text-sm text-muted-foreground">
@@ -449,15 +506,6 @@ function PasswordInput({
           {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       </div>
-    </div>
-  );
-}
-
-function Info({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
-      <div className="mt-0.5 break-words font-medium">{value}</div>
     </div>
   );
 }

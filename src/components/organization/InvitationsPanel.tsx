@@ -1,16 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { useNavigate, useRouter, useRouteContext } from "@tanstack/react-router";
 import { Building2, Check, Mail, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import {
-  acceptInvitationBackend,
-  declineInvitationBackend,
-  getPendingInvitationsBackend,
-} from "@/lib/organization-backend";
 import { roleLabels, type OrganizationRole } from "@/lib/rbac";
 import { supabaseUntyped } from "@/lib/supabase-untyped";
 
@@ -22,7 +16,6 @@ type Invitation = {
   created_at: string;
   organizations: { name: string } | null;
   inviter: { full_name: string | null; email: string } | null;
-  source: "database" | "local";
 };
 
 export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
@@ -31,39 +24,23 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
   const qc = useQueryClient();
   const router = useRouter();
   const navigate = useNavigate();
-  const getPendingInvitations = useServerFn(getPendingInvitationsBackend);
-  const acceptInvitation = useServerFn(acceptInvitationBackend);
-  const declineInvitation = useServerFn(declineInvitationBackend);
 
   const { data: invitations = [], isLoading } = useQuery({
     queryKey: ["organization-invitations", user.id],
     queryFn: async () => {
-      const [databaseInvitations, localInvitations] = await Promise.all([
-        getDatabasePendingInvitations(db, user.email ?? null),
-        getPendingInvitations().catch(() => []),
-      ]);
-
-      const merged = new Map<string, Invitation>();
-      for (const invitation of databaseInvitations) merged.set(invitation.id, invitation);
-      for (const invitation of localInvitations as Omit<Invitation, "source">[]) {
-        merged.set(invitation.id, { ...invitation, source: "local" });
-      }
-      return Array.from(merged.values()).sort((a, b) => b.created_at.localeCompare(a.created_at));
+      return getDatabasePendingInvitations(db, user.email ?? null);
     },
   });
 
   const accept = useMutation({
     mutationFn: async (invitation: Invitation) => {
-      if (invitation.source === "database") {
-        const { error } = await db.rpc("accept_organization_invitation", {
-          p_invitation_id: invitation.id,
-        });
-        if (error) throw error;
-        return;
+      const { data: organizationId, error } = await db.rpc("accept_organization_invitation", {
+        p_invitation_id: invitation.id,
+      });
+      if (error) throw error;
+      if (organizationId) {
+        window.localStorage.setItem("ai-news-active-organization-id", String(organizationId));
       }
-
-      const result = await acceptInvitation({ data: { invitationId: invitation.id } });
-      if (!result.ok) throw new Error(result.error);
     },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["organization-invitations"] });
@@ -77,16 +54,10 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
 
   const decline = useMutation({
     mutationFn: async (invitation: Invitation) => {
-      if (invitation.source === "database") {
-        const { error } = await db.rpc("decline_organization_invitation", {
-          p_invitation_id: invitation.id,
-        });
-        if (error) throw error;
-        return;
-      }
-
-      const result = await declineInvitation({ data: { invitationId: invitation.id } });
-      if (!result.ok) throw new Error(result.error);
+      const { error } = await db.rpc("decline_organization_invitation", {
+        p_invitation_id: invitation.id,
+      });
+      if (error) throw error;
     },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["organization-invitations"] });
@@ -199,19 +170,7 @@ async function getDatabasePendingInvitations(
     .eq("status", "pending")
     .eq("email", normalizedEmail)
     .order("created_at", { ascending: false });
-  if (error) {
-    if (isMissingOrganizationSchemaError(error)) {
-      console.info("[Invitations][query:schema-missing]", {
-        authenticatedEmail: normalizedEmail,
-        invitationEmail: normalizedEmail,
-        returnedInvitations: [],
-        organizationId: null,
-        reason: "Organization invitation schema is unavailable; database invitations skipped.",
-      });
-      return [];
-    }
-    throw error;
-  }
+  if (error) throw error;
 
   const rows = data ?? [];
   if (rows.length === 0) {
@@ -237,7 +196,6 @@ async function getDatabasePendingInvitations(
     created_at: row.created_at,
     organizations: row.organization_name ? { name: row.organization_name } : null,
     inviter: profiles.get(row.invited_by) ?? null,
-    source: "database",
   }));
 
   console.info("[Invitations][query:result]", {
@@ -282,15 +240,4 @@ async function getInviterProfiles(db: typeof supabaseUntyped, ids: string[]) {
 
 function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
-}
-
-function isMissingOrganizationSchemaError(error: unknown) {
-  if (!error || typeof error !== "object" || !("message" in error)) return false;
-  const message = String(error.message).toLowerCase();
-  return (
-    message.includes("schema cache") &&
-    (message.includes("organization_members") ||
-      message.includes("organization_invitations") ||
-      message.includes("role_permissions"))
-  );
 }

@@ -1,6 +1,14 @@
 import { createFileRoute, Link, useRouteContext } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Cpu, FileCheck2, FileText, Users, type LucideIcon } from "lucide-react";
+import {
+  ArrowRight,
+  Building2,
+  Cpu,
+  FileCheck2,
+  FileText,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect } from "react";
 import { toast } from "sonner";
 
@@ -33,6 +41,7 @@ function Dashboard() {
       const { data, error } = await supabase
         .from("newspapers")
         .select("*")
+        .eq("organization_id", ctx.organization!.id)
         .order("created_at", { ascending: false })
         .limit(6);
       if (error) throw error;
@@ -84,6 +93,44 @@ function Dashboard() {
       </div>
 
       <InvitationsPanel compact />
+
+      {ctx.organizations.length > 0 && (
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Organizations</h2>
+            {canManageTeam && (
+              <Link to="/team" className="text-sm text-primary hover:underline">
+                Manage
+              </Link>
+            )}
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {ctx.organizations.map((item) => {
+              const active = item.organization.id === ctx.organization?.id;
+              return (
+                <Link
+                  key={item.organization.id}
+                  to="/team"
+                  className={`rounded-lg border bg-card p-4 transition hover:border-primary/40 ${
+                    active ? "border-primary/60 ring-1 ring-primary/20" : ""
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <Building2 className="mt-0.5 h-5 w-5 text-primary" />
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold">{item.organization.name}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {roleLabels[item.membership.role]}
+                        {active ? " - Active workspace" : ""}
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-3">
         <Stat icon={FileText} label="Recent editions" value={counts.total} />

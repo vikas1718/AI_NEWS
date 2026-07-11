@@ -1,5 +1,4 @@
 import { createFileRoute, redirect, useRouteContext, useRouter } from "@tanstack/react-router";
-import { useServerFn } from "@tanstack/react-start";
 import { Building2, Save } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -9,7 +8,6 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { updateOrganizationBackend } from "@/lib/organization-backend";
 import { hasPermission } from "@/lib/rbac";
 import { supabaseUntyped } from "@/lib/supabase-untyped";
 
@@ -27,8 +25,6 @@ function OrganizationSettings() {
   const router = useRouter();
   const db = supabaseUntyped;
   const organization = ctx.organization!;
-  const isLocalOrganization = organization.id.startsWith("local_");
-  const updateLocalOrganization = useServerFn(updateOrganizationBackend);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     name: organization.name,
@@ -49,33 +45,20 @@ function OrganizationSettings() {
 
     setLoading(true);
     try {
-      if (isLocalOrganization) {
-        const result = await updateLocalOrganization({
-          data: {
-            name,
-            logo_url: form.logo_url,
-            description: form.description,
-            email: form.email,
-            phone_number: form.phone_number,
-            address: form.address,
-          },
-        });
-        if (!result.ok) throw new Error(result.error);
-      } else {
-        const { error } = await db
-          .from("organizations")
-          .update({
-            name,
-            logo_url: form.logo_url || null,
-            description: form.description || null,
-            email: form.email || null,
-            phone_number: form.phone_number || null,
-            address: form.address || null,
-            organization_type: null,
-          })
-          .eq("id", organization.id);
-        if (error) throw error;
-      }
+      const { error } = await db
+        .from("organizations")
+        .update({
+          name,
+          logo_url: form.logo_url || null,
+          description: form.description || null,
+          email: form.email || null,
+          phone_number: form.phone_number || null,
+          address: form.address || null,
+          organization_type: null,
+        })
+        .eq("id", organization.id);
+      if (error) throw error;
+
       await router.invalidate();
       toast.success("Organization settings updated");
     } catch (error: unknown) {
