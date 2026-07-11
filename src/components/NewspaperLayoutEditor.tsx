@@ -1998,7 +1998,7 @@ export function NewspaperLayoutEditor({
                 }}
               >
                 <div className="flex h-full flex-col p-6">
-                  <div className="mb-3 border-b-4 border-double border-newsprint-ink pb-2">
+                  <div className="mb-3 bg-white pb-2 text-newsprint-ink border-b-4 border-double border-newsprint-ink">
                     {activePage === 1 ? (
                       <div
                         className="grid items-stretch gap-3"

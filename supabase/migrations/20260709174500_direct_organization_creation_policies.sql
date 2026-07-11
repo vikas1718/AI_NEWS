@@ -1,0 +1,1 @@
+-- No-op: there are no database-backed organization tables in the current schema.

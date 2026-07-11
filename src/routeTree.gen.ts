@@ -12,14 +12,20 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthenticatedPipelineRouteImport } from './routes/_authenticated/pipeline'
+import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
+import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
+import { Route as AuthenticatedOrganizationSettingsRouteImport } from './routes/_authenticated/organization-settings'
+import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
+import { Route as AuthenticatedMultiplatformRouteImport } from './routes/_authenticated/multiplatform'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedAiGenerateLayoutRouteImport } from './routes/_authenticated/ai-generate-layout'
+import { Route as AuthenticatedAccessDeniedRouteImport } from './routes/_authenticated/access-denied'
 import { Route as AuthenticatedAboutRouteImport } from './routes/_authenticated/about'
 import { Route as AuthenticatedReviewIndexRouteImport } from './routes/_authenticated/review/index'
 import { Route as AuthenticatedEditionsIndexRouteImport } from './routes/_authenticated/editions/index'
 import { Route as AuthenticatedReviewIdRouteImport } from './routes/_authenticated/review/$id'
 import { Route as AuthenticatedPublishedIdRouteImport } from './routes/_authenticated/published/$id'
+import { Route as AuthenticatedMultiplatformInstagramRouteImport } from './routes/_authenticated/multiplatform_.instagram'
 import { Route as AuthenticatedEditionsIdRouteImport } from './routes/_authenticated/editions/$id'
 
 const AuthRoute = AuthRouteImport.update({
@@ -36,11 +42,33 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedPipelineRoute = AuthenticatedPipelineRouteImport.update({
-  id: '/pipeline',
-  path: '/pipeline',
+const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedOrganizationSettingsRoute =
+  AuthenticatedOrganizationSettingsRouteImport.update({
+    id: '/organization-settings',
+    path: '/organization-settings',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedOnboardingRoute = AuthenticatedOnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedMultiplatformRoute =
+  AuthenticatedMultiplatformRouteImport.update({
+    id: '/multiplatform',
+    path: '/multiplatform',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -50,6 +78,12 @@ const AuthenticatedAiGenerateLayoutRoute =
   AuthenticatedAiGenerateLayoutRouteImport.update({
     id: '/ai-generate-layout',
     path: '/ai-generate-layout',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedAccessDeniedRoute =
+  AuthenticatedAccessDeniedRouteImport.update({
+    id: '/access-denied',
+    path: '/access-denied',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedAboutRoute = AuthenticatedAboutRouteImport.update({
@@ -80,6 +114,12 @@ const AuthenticatedPublishedIdRoute =
     path: '/published/$id',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedMultiplatformInstagramRoute =
+  AuthenticatedMultiplatformInstagramRouteImport.update({
+    id: '/multiplatform_/instagram',
+    path: '/multiplatform/instagram',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedEditionsIdRoute = AuthenticatedEditionsIdRouteImport.update({
   id: '/editions/$id',
   path: '/editions/$id',
@@ -90,10 +130,16 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/about': typeof AuthenticatedAboutRoute
+  '/access-denied': typeof AuthenticatedAccessDeniedRoute
   '/ai-generate-layout': typeof AuthenticatedAiGenerateLayoutRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/pipeline': typeof AuthenticatedPipelineRoute
+  '/multiplatform': typeof AuthenticatedMultiplatformRoute
+  '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
+  '/team': typeof AuthenticatedTeamRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
+  '/multiplatform/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
   '/review/$id': typeof AuthenticatedReviewIdRoute
   '/editions/': typeof AuthenticatedEditionsIndexRoute
@@ -103,10 +149,16 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/about': typeof AuthenticatedAboutRoute
+  '/access-denied': typeof AuthenticatedAccessDeniedRoute
   '/ai-generate-layout': typeof AuthenticatedAiGenerateLayoutRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/pipeline': typeof AuthenticatedPipelineRoute
+  '/multiplatform': typeof AuthenticatedMultiplatformRoute
+  '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
+  '/settings': typeof AuthenticatedSettingsRoute
+  '/team': typeof AuthenticatedTeamRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
+  '/multiplatform/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
   '/review/$id': typeof AuthenticatedReviewIdRoute
   '/editions': typeof AuthenticatedEditionsIndexRoute
@@ -118,10 +170,16 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/about': typeof AuthenticatedAboutRoute
+  '/_authenticated/access-denied': typeof AuthenticatedAccessDeniedRoute
   '/_authenticated/ai-generate-layout': typeof AuthenticatedAiGenerateLayoutRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
-  '/_authenticated/pipeline': typeof AuthenticatedPipelineRoute
+  '/_authenticated/multiplatform': typeof AuthenticatedMultiplatformRoute
+  '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
+  '/_authenticated/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
+  '/_authenticated/settings': typeof AuthenticatedSettingsRoute
+  '/_authenticated/team': typeof AuthenticatedTeamRoute
   '/_authenticated/editions/$id': typeof AuthenticatedEditionsIdRoute
+  '/_authenticated/multiplatform_/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/_authenticated/published/$id': typeof AuthenticatedPublishedIdRoute
   '/_authenticated/review/$id': typeof AuthenticatedReviewIdRoute
   '/_authenticated/editions/': typeof AuthenticatedEditionsIndexRoute
@@ -133,10 +191,16 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/about'
+    | '/access-denied'
     | '/ai-generate-layout'
     | '/dashboard'
-    | '/pipeline'
+    | '/multiplatform'
+    | '/onboarding'
+    | '/organization-settings'
+    | '/settings'
+    | '/team'
     | '/editions/$id'
+    | '/multiplatform/instagram'
     | '/published/$id'
     | '/review/$id'
     | '/editions/'
@@ -146,10 +210,16 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/about'
+    | '/access-denied'
     | '/ai-generate-layout'
     | '/dashboard'
-    | '/pipeline'
+    | '/multiplatform'
+    | '/onboarding'
+    | '/organization-settings'
+    | '/settings'
+    | '/team'
     | '/editions/$id'
+    | '/multiplatform/instagram'
     | '/published/$id'
     | '/review/$id'
     | '/editions'
@@ -160,10 +230,16 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/about'
+    | '/_authenticated/access-denied'
     | '/_authenticated/ai-generate-layout'
     | '/_authenticated/dashboard'
-    | '/_authenticated/pipeline'
+    | '/_authenticated/multiplatform'
+    | '/_authenticated/onboarding'
+    | '/_authenticated/organization-settings'
+    | '/_authenticated/settings'
+    | '/_authenticated/team'
     | '/_authenticated/editions/$id'
+    | '/_authenticated/multiplatform_/instagram'
     | '/_authenticated/published/$id'
     | '/_authenticated/review/$id'
     | '/_authenticated/editions/'
@@ -199,11 +275,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/pipeline': {
-      id: '/_authenticated/pipeline'
-      path: '/pipeline'
-      fullPath: '/pipeline'
-      preLoaderRoute: typeof AuthenticatedPipelineRouteImport
+    '/_authenticated/team': {
+      id: '/_authenticated/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof AuthenticatedTeamRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/settings': {
+      id: '/_authenticated/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthenticatedSettingsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/organization-settings': {
+      id: '/_authenticated/organization-settings'
+      path: '/organization-settings'
+      fullPath: '/organization-settings'
+      preLoaderRoute: typeof AuthenticatedOrganizationSettingsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/onboarding': {
+      id: '/_authenticated/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof AuthenticatedOnboardingRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/multiplatform': {
+      id: '/_authenticated/multiplatform'
+      path: '/multiplatform'
+      fullPath: '/multiplatform'
+      preLoaderRoute: typeof AuthenticatedMultiplatformRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/dashboard': {
@@ -218,6 +322,13 @@ declare module '@tanstack/react-router' {
       path: '/ai-generate-layout'
       fullPath: '/ai-generate-layout'
       preLoaderRoute: typeof AuthenticatedAiGenerateLayoutRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/access-denied': {
+      id: '/_authenticated/access-denied'
+      path: '/access-denied'
+      fullPath: '/access-denied'
+      preLoaderRoute: typeof AuthenticatedAccessDeniedRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/about': {
@@ -255,6 +366,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPublishedIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/multiplatform_/instagram': {
+      id: '/_authenticated/multiplatform_/instagram'
+      path: '/multiplatform/instagram'
+      fullPath: '/multiplatform/instagram'
+      preLoaderRoute: typeof AuthenticatedMultiplatformInstagramRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/editions/$id': {
       id: '/_authenticated/editions/$id'
       path: '/editions/$id'
@@ -267,10 +385,16 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAboutRoute: typeof AuthenticatedAboutRoute
+  AuthenticatedAccessDeniedRoute: typeof AuthenticatedAccessDeniedRoute
   AuthenticatedAiGenerateLayoutRoute: typeof AuthenticatedAiGenerateLayoutRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
-  AuthenticatedPipelineRoute: typeof AuthenticatedPipelineRoute
+  AuthenticatedMultiplatformRoute: typeof AuthenticatedMultiplatformRoute
+  AuthenticatedOnboardingRoute: typeof AuthenticatedOnboardingRoute
+  AuthenticatedOrganizationSettingsRoute: typeof AuthenticatedOrganizationSettingsRoute
+  AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
+  AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
   AuthenticatedEditionsIdRoute: typeof AuthenticatedEditionsIdRoute
+  AuthenticatedMultiplatformInstagramRoute: typeof AuthenticatedMultiplatformInstagramRoute
   AuthenticatedPublishedIdRoute: typeof AuthenticatedPublishedIdRoute
   AuthenticatedReviewIdRoute: typeof AuthenticatedReviewIdRoute
   AuthenticatedEditionsIndexRoute: typeof AuthenticatedEditionsIndexRoute
@@ -279,10 +403,18 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAboutRoute: AuthenticatedAboutRoute,
+  AuthenticatedAccessDeniedRoute: AuthenticatedAccessDeniedRoute,
   AuthenticatedAiGenerateLayoutRoute: AuthenticatedAiGenerateLayoutRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
-  AuthenticatedPipelineRoute: AuthenticatedPipelineRoute,
+  AuthenticatedMultiplatformRoute: AuthenticatedMultiplatformRoute,
+  AuthenticatedOnboardingRoute: AuthenticatedOnboardingRoute,
+  AuthenticatedOrganizationSettingsRoute:
+    AuthenticatedOrganizationSettingsRoute,
+  AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
+  AuthenticatedTeamRoute: AuthenticatedTeamRoute,
   AuthenticatedEditionsIdRoute: AuthenticatedEditionsIdRoute,
+  AuthenticatedMultiplatformInstagramRoute:
+    AuthenticatedMultiplatformInstagramRoute,
   AuthenticatedPublishedIdRoute: AuthenticatedPublishedIdRoute,
   AuthenticatedReviewIdRoute: AuthenticatedReviewIdRoute,
   AuthenticatedEditionsIndexRoute: AuthenticatedEditionsIndexRoute,

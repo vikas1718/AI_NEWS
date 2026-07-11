@@ -1,0 +1,1 @@
+-- No-op: chief-editor permissions are handled in src/lib/rbac.ts.

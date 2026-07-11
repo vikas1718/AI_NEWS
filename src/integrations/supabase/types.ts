@@ -129,6 +129,7 @@ export type Database = {
           id: string;
           language: string;
           number_of_pages: number;
+          organization_id: string | null;
           status: Database["public"]["Enums"]["newspaper_status"];
           template: string;
           updated_at: string;
@@ -141,6 +142,7 @@ export type Database = {
           id?: string;
           language?: string;
           number_of_pages?: number;
+          organization_id?: string | null;
           status?: Database["public"]["Enums"]["newspaper_status"];
           template?: string;
           updated_at?: string;
@@ -153,6 +155,7 @@ export type Database = {
           id?: string;
           language?: string;
           number_of_pages?: number;
+          organization_id?: string | null;
           status?: Database["public"]["Enums"]["newspaper_status"];
           template?: string;
           updated_at?: string;

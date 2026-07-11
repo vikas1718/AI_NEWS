@@ -11,6 +11,7 @@ export interface Newspaper {
   edition_date: string;
   language: string;
   number_of_pages: number;
+  organization_id: string | null;
   template: string;
   status: NewspaperStatus;
   created_by: string;
@@ -40,20 +41,54 @@ export interface Article {
   created_at: string;
 }
 
+export interface InstagramSlideContent {
+  article_id: string;
+  caption: string;
+  mentions: string[];
+  hashtags: string[];
+}
+
+export interface SocialContentEdit {
+  caption: string;
+  mentions: string[];
+  hashtags: string[];
+  provider?: string;
+}
+
+export interface ScheduledSlide {
+  articleId: string;
+  order: number;
+  imageUrl: string | null;
+  caption: string;
+  mentions: string[];
+  hashtags: string[];
+}
+
+export interface ScheduledPost {
+  id: string;
+  platform: "instagram" | "twitter" | "facebook" | "whatsapp" | "inshorts";
+  status: "scheduled" | "cancelled";
+  scheduledAt: string;
+  createdAt: string;
+  updatedAt: string;
+  slides: ScheduledSlide[];
+}
+
 type ImageArticlePayload = Partial<Article> & {
   prompt?: string;
 };
 
 type JsonObject = Record<string, unknown>;
 
-type GeneratedLayoutItem = {
+export interface LayoutPlanItem {
   article_id: string;
   page_number: number;
   position: string;
   headline_size: string;
   image_size: string;
   column_count: number;
-};
+  slot_index?: number;
+}
 
 export type ProcessArticleOptions = {
   targetWordLimit?: number;
@@ -87,7 +122,7 @@ async function callFn<T = unknown>(name: string, body: unknown): Promise<T> {
   }
   if (!res.ok) {
     const errorPayload = isJsonObject(json) ? json : {};
-    const detail = [errorPayload.error, errorPayload.detail]
+    const detail = [errorPayload.error, errorPayload.message, errorPayload.detail]
       .filter((part) => typeof part === "string" && part.trim())
       .join(": ");
     throw new Error(detail || `fn ${name} failed with HTTP ${res.status}`);
@@ -106,12 +141,39 @@ export const aiFn = {
       category: ArticleCategory;
       priority_score: number;
     }>("process-article-ai", { text, targetWordLimit: options.targetWordLimit ?? 250 }),
-  image: (payload: string | Partial<Article>) =>
+  image: (payload: string | ImageArticlePayload) =>
     callFn<{ image_url: string }>(
       "generate-image",
       typeof payload === "string" ? { prompt: payload } : { article: payload },
     ),
+  instagram: (articles: Partial<Article>[]) =>
+    callFn<{ slides: InstagramSlideContent[]; provider?: string }>("generate-instagram-content", {
+      articles,
+    }),
+  editSocialContent: (payload: {
+    platform: ScheduledPost["platform"];
+    caption: string;
+    mentions: string[];
+    hashtags: string[];
+    instructions: string;
+    article: Partial<Article> | null;
+  }) => callFn<SocialContentEdit>("edit-social-content", payload),
   layout: (articles: Article[], number_of_pages: number) =>
-    callFn<{ layout: GeneratedLayoutItem[] }>("generate-layout", { articles, number_of_pages }),
+    callFn<{ layout: LayoutPlanItem[] }>("generate-layout", { articles, number_of_pages }),
   tts: (text: string) => callFn<{ audio_url: string; simulated: boolean }>("tts-kannada", { text }),
+};
+
+export const scheduleFn = {
+  list: () => callFn<{ posts: ScheduledPost[] }>("list-scheduled-posts", {}),
+  create: (post: {
+    platform: ScheduledPost["platform"];
+    scheduledAt: string;
+    slides: ScheduledSlide[];
+  }) => callFn<{ post: ScheduledPost }>("schedule-post", { post }),
+  update: (postId: string, scheduledAt: string) =>
+    callFn<{ post: ScheduledPost }>("update-scheduled-post", { id: postId, scheduledAt }),
+  cancel: (postId: string) =>
+    callFn<{ post: ScheduledPost }>("cancel-scheduled-post", { id: postId }),
+  delete: (postId: string) =>
+    callFn<{ deleted: true; id: string }>("delete-scheduled-post", { id: postId }),
 };

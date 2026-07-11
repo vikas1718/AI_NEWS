@@ -1,0 +1,1 @@
+-- No-op: leaving an organization is handled by the app-local workspace store.

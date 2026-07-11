@@ -7,17 +7,23 @@ import os
 import random
 import sys
 import traceback
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock
 from typing import Any
+from uuid import uuid4
 
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_VERSION = "openai-images-ocr-2026-07-06"
+SCHEDULED_POSTS_FILE = ROOT / "backend" / "data" / "scheduled_posts.json"
+SCHEDULED_POSTS_LOCK = Lock()
+SUPPORTED_SOCIAL_PLATFORMS = {"instagram", "twitter", "facebook", "whatsapp", "inshorts"}
 VALID_CATEGORIES = {
     "Politics",
     "Sports",
@@ -141,6 +147,68 @@ Rules:
 - Keep it under 90 words.
 Respond ONLY with JSON."""
 
+INSTAGRAM_CONTENT_PROMPT = """You are an expert Instagram news editor.
+Generate Instagram-ready content for every news article provided by the user.
+
+For each article:
+1. Read the news article.
+2. Identify important entities directly mentioned in the article:
+   people, athletes, celebrities, politicians, government organizations, companies,
+   sports teams, clubs, brands, official organizations, and news organizations.
+3. Generate one concise Instagram caption.
+4. Generate relevant hashtags.
+5. Generate relevant Instagram mentions for directly relevant official/person accounts.
+
+Rules:
+- Return mentions only when they are directly relevant to the article.
+- If no suitable Instagram mention exists, return an empty mentions array.
+- Do not invent unrelated accounts.
+- Mentions must start with @.
+- Hashtags must start with #.
+- Keep each caption concise and factual.
+- Preserve the input article order.
+
+Return ONLY strict JSON in this exact shape:
+{
+  "slides": [
+    {
+      "article_id": "same id from input",
+      "caption": "short Instagram caption",
+      "mentions": ["@account"],
+      "hashtags": ["#Tag"]
+    }
+  ]
+}"""
+
+SOCIAL_CONTENT_EDIT_PROMPT = """You are an expert social media news editor and AI editing assistant.
+Edit the current post content according to the user's instructions.
+
+You will receive JSON with:
+- platform
+- caption
+- mentions
+- hashtags
+- instructions
+- article
+
+Rules:
+- Apply the user's instructions directly.
+- Preserve factual accuracy and do not invent unsupported facts.
+- Use the article as source context.
+- Tailor wording to the selected platform when requested.
+- Preserve images and carousel order by returning text fields only.
+- Return mentions as an array. Mentions must start with @.
+- Return hashtags as an array. Hashtags must start with #.
+- If the instruction asks to remove hashtags or mentions, do so.
+- If no mentions are appropriate, return an empty mentions array.
+
+Return ONLY strict JSON in this exact shape:
+{
+  "caption": "updated caption",
+  "mentions": ["@account"],
+  "hashtags": ["#Tag"]
+}"""
+
 OCR_PROMPT = """Perform OCR on the provided image/document. Extract all visible text exactly as it appears.
 Preserve the original language, formatting, line breaks, punctuation, and paragraph structure.
 Return only the extracted text. Do not translate, summarize, correct, rewrite, add headings, or add explanations.
@@ -184,6 +252,65 @@ def read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
         return {}
     raw = handler.rfile.read(length)
     return json.loads(raw.decode("utf-8"))
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_iso_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def read_scheduled_posts() -> list[dict[str, Any]]:
+    if not SCHEDULED_POSTS_FILE.exists():
+        return []
+    try:
+        data = json.loads(SCHEDULED_POSTS_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def write_scheduled_posts(posts: list[dict[str, Any]]) -> None:
+    SCHEDULED_POSTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = SCHEDULED_POSTS_FILE.with_suffix(".tmp")
+    temp_file.write_text(json.dumps(posts, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_file.replace(SCHEDULED_POSTS_FILE)
+
+
+def normalize_scheduled_slide(slide: dict[str, Any], order: int) -> dict[str, Any]:
+    return {
+        "articleId": str(slide.get("articleId") or slide.get("article_id") or ""),
+        "order": int(slide.get("order") if slide.get("order") is not None else order),
+        "imageUrl": slide.get("imageUrl") or slide.get("image_url"),
+        "caption": str(slide.get("caption") or ""),
+        "mentions": [str(item) for item in slide.get("mentions") or [] if str(item).strip()],
+        "hashtags": [str(item) for item in slide.get("hashtags") or [] if str(item).strip()],
+    }
+
+
+def normalize_scheduled_post(post: dict[str, Any]) -> dict[str, Any]:
+    platform = str(post.get("platform") or "instagram")
+    if platform not in SUPPORTED_SOCIAL_PLATFORMS:
+        platform = "instagram"
+
+    return {
+        "id": str(post.get("id") or ""),
+        "platform": platform,
+        "status": str(post.get("status") or "scheduled"),
+        "scheduledAt": str(post.get("scheduledAt") or ""),
+        "createdAt": str(post.get("createdAt") or ""),
+        "updatedAt": str(post.get("updatedAt") or ""),
+        "slides": [
+            normalize_scheduled_slide(slide, index)
+            for index, slide in enumerate(post.get("slides") or [])
+            if isinstance(slide, dict)
+        ],
+    }
 
 
 def env_value(name: str) -> str | None:
@@ -265,6 +392,17 @@ def has_kannada_text(text: str) -> bool:
     return count_kannada_chars(text) >= 5
 
 
+def read_provider_json(request: urllib.request.Request, timeout: int) -> dict[str, Any]:
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"AI provider returned {exc.code}: {body or exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"AI provider request failed: {exc.reason}") from exc
+
+
 def call_openai_chat(text: str, system_prompt: str = SYSTEM_PROMPT) -> dict[str, Any] | None:
     azure_key = get_azure_openai_key()
     if azure_key:
@@ -285,7 +423,7 @@ def call_openai_chat(text: str, system_prompt: str = SYSTEM_PROMPT) -> dict[str,
             method="POST",
         )
 
-        with urllib.request.urlopen(request, timeout=openai_text_timeout()) as response:
+        with urllib.request.urlopen(request, timeout=60) as response:
             data = json.loads(response.read().decode("utf-8"))
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         return json.loads(content)
@@ -309,7 +447,7 @@ def call_openai_chat(text: str, system_prompt: str = SYSTEM_PROMPT) -> dict[str,
         method="POST",
     )
 
-    with urllib.request.urlopen(request, timeout=openai_text_timeout()) as response:
+    with urllib.request.urlopen(request, timeout=60) as response:
         data = json.loads(response.read().decode("utf-8"))
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
     return json.loads(content)
@@ -839,6 +977,208 @@ def handle_generate_layout(payload: dict[str, Any]) -> dict[str, Any]:
     return {"layout": layout, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
+def normalize_instagram_tag(value: Any, prefix: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.split()[0].strip()
+    text = text.lstrip("@#")
+    text = "".join(char for char in text if char.isalnum() or char in "._")
+    return f"{prefix}{text}" if text else ""
+
+
+def unique_prefixed_items(values: Any, prefix: str, limit: int) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        item = normalize_instagram_tag(value, prefix)
+        key = item.lower()
+        if item and key not in seen:
+            seen.add(key)
+            result.append(item)
+        if len(result) >= limit:
+            break
+    return result
+
+
+VERIFIED_INSTAGRAM_HANDLES: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
+    (("virat kohli", "kohli"), ("@virat.kohli", "@indiancricketteam", "@icc")),
+    (("rohit sharma",), ("@rohitsharma45", "@indiancricketteam", "@icc")),
+    (("lionel messi", "messi"), ("@leomessi", "@fifaworldcup")),
+    (("cristiano ronaldo", "ronaldo"), ("@cristiano",)),
+    (("fifa", "world cup"), ("@fifaworldcup",)),
+    (("icc", "cricket council"), ("@icc",)),
+    (("bcci", "team india", "indian cricket"), ("@indiancricketteam", "@icc")),
+    (("ipl", "indian premier league"), ("@iplt20",)),
+    (("narendra modi", "prime minister of india", "prime minister modi"), ("@narendramodi",)),
+    (("white house",), ("@whitehouse",)),
+    (("election commission",), ("@eciindia",)),
+    (("openai", "chatgpt"), ("@openai",)),
+    (("isro", "indian space research organisation", "indian space research organization"), ("@isro.in",)),
+    (("nasa",), ("@nasa",)),
+    (("spacex",), ("@spacex",)),
+    (("elon musk",), ("@elonmusk", "@spacex")),
+    (("google", "alphabet"), ("@google",)),
+    (("microsoft",), ("@microsoft",)),
+    (("apple", "iphone"), ("@apple",)),
+    (("tesla",), ("@teslamotors",)),
+    (("meta", "facebook", "instagram"), ("@meta",)),
+    (("amazon",), ("@amazon",)),
+    (("netflix",), ("@netflix",)),
+]
+
+
+def article_instagram_text(article: dict[str, Any]) -> str:
+    return " ".join(
+        str(article.get(key) or "")
+        for key in ("headline", "summary", "category", "corrected_text", "raw_text")
+    ).lower()
+
+
+def mapped_instagram_mentions(article: dict[str, Any]) -> list[str]:
+    text = article_instagram_text(article)
+    mentions: list[str] = []
+    for signals, handles in VERIFIED_INSTAGRAM_HANDLES:
+        if any(signal in text for signal in signals):
+            mentions.extend(handles)
+    return unique_prefixed_items(mentions, "@", 8)
+
+
+def fallback_instagram_slide(article: dict[str, Any]) -> dict[str, Any]:
+    headline = str(article.get("headline") or "Today\'s top story").strip()
+    category = str(article.get("category") or "News").strip()
+    hashtags = unique_prefixed_items([category, "IndiaNews", "Prajavani"], "#", 10)
+    return {
+        "article_id": str(article.get("id") or ""),
+        "caption": headline.rstrip(".") + "...",
+        "mentions": mapped_instagram_mentions(article),
+        "hashtags": hashtags,
+    }
+
+
+def normalize_instagram_slide(article: dict[str, Any], slide: Any) -> dict[str, Any]:
+    if not isinstance(slide, dict):
+        return fallback_instagram_slide(article)
+    fallback = fallback_instagram_slide(article)
+    caption = str(slide.get("caption") or "").strip() or fallback["caption"]
+    mentions = unique_prefixed_items(
+        [*mapped_instagram_mentions(article), *unique_prefixed_items(slide.get("mentions"), "@", 8)],
+        "@",
+        8,
+    )
+    return {
+        "article_id": str(slide.get("article_id") or article.get("id") or ""),
+        "caption": caption,
+        "mentions": mentions,
+        "hashtags": unique_prefixed_items(slide.get("hashtags"), "#", 15) or fallback["hashtags"],
+    }
+
+
+def normalize_social_edit_result(payload: dict[str, Any], result: Any, provider: str) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        result = {}
+
+    caption = str(result.get("caption") or payload.get("caption") or "").strip()
+    raw_mentions = result.get("mentions") if isinstance(result.get("mentions"), list) else payload.get("mentions")
+    raw_hashtags = result.get("hashtags") if isinstance(result.get("hashtags"), list) else payload.get("hashtags")
+
+    return {
+        "caption": caption,
+        "mentions": unique_prefixed_items(raw_mentions, "@", 10),
+        "hashtags": unique_prefixed_items(raw_hashtags, "#", 20),
+        "provider": provider,
+    }
+
+
+def handle_edit_social_content(payload: dict[str, Any]) -> dict[str, Any]:
+    platform = str(payload.get("platform") or "instagram")
+    if platform not in SUPPORTED_SOCIAL_PLATFORMS:
+        raise ValueError("Unsupported platform")
+
+    instructions = str(payload.get("instructions") or "").strip()
+    if not instructions:
+        raise ValueError("instructions required")
+
+    article = payload.get("article") if isinstance(payload.get("article"), dict) else {}
+    safe_payload = {
+        "platform": platform,
+        "caption": str(payload.get("caption") or ""),
+        "mentions": [str(item) for item in payload.get("mentions") or [] if str(item).strip()],
+        "hashtags": [str(item) for item in payload.get("hashtags") or [] if str(item).strip()],
+        "instructions": instructions,
+        "article": {
+            "id": str(article.get("id") or ""),
+            "headline": article.get("headline"),
+            "summary": article.get("summary"),
+            "category": article.get("category"),
+            "corrected_text": article.get("corrected_text"),
+            "raw_text": article.get("raw_text"),
+        },
+    }
+
+    result = call_openai_chat(json.dumps(safe_payload, ensure_ascii=False), SOCIAL_CONTENT_EDIT_PROMPT)
+    if result is None:
+        raise RuntimeError("OpenAI API key missing.")
+
+    return normalize_social_edit_result(safe_payload, result, "openai")
+
+
+def handle_generate_instagram_content(payload: dict[str, Any]) -> dict[str, Any]:
+    articles = payload.get("articles")
+    if not isinstance(articles, list) or not articles:
+        raise ValueError("articles required")
+
+    safe_articles = []
+    for article in articles[:6]:
+        if not isinstance(article, dict):
+            continue
+        safe_articles.append(
+            {
+                "id": str(article.get("id") or ""),
+                "headline": article.get("headline"),
+                "summary": article.get("summary"),
+                "category": article.get("category"),
+                "corrected_text": article.get("corrected_text"),
+                "raw_text": article.get("raw_text"),
+            }
+        )
+
+    if not safe_articles:
+        raise ValueError("valid articles required")
+
+    result = call_openai_chat(json.dumps({"articles": safe_articles}, ensure_ascii=False), INSTAGRAM_CONTENT_PROMPT)
+    print("Instagram AI Response:", result)
+    if result is None:
+        return {
+            "slides": [fallback_instagram_slide(article) for article in safe_articles],
+            "provider": "fallback",
+            "backend_version": BACKEND_VERSION,
+        }
+
+    slides = result.get("slides") if isinstance(result, dict) else []
+    if not isinstance(slides, list):
+        slides = []
+
+    slides_by_id = {
+        str(slide.get("article_id") or ""): slide
+        for slide in slides
+        if isinstance(slide, dict)
+    }
+    normalized_slides = [
+        normalize_instagram_slide(article, slides_by_id.get(str(article.get("id") or ""), {}))
+        for article in safe_articles
+    ]
+    print("Instagram Normalized Slides:", normalized_slides)
+
+    return {
+        "slides": normalized_slides,
+        "provider": "openai",
+        "backend_version": BACKEND_VERSION,
+    }
+
+
 def handle_tts(payload: dict[str, Any]) -> dict[str, Any]:
     text = str(payload.get("text") or "")
     return {
@@ -848,11 +1188,133 @@ def handle_tts(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def validate_future_schedule(scheduled_at: str) -> None:
+    if not scheduled_at:
+        raise ValueError("scheduledAt is required")
+    try:
+        parsed = parse_iso_datetime(scheduled_at)
+    except ValueError as exc:
+        raise ValueError("scheduledAt must be a valid ISO datetime") from exc
+    if parsed <= datetime.now(timezone.utc):
+        raise ValueError("scheduledAt must be in the future")
+
+
+def handle_list_scheduled_posts(payload: dict[str, Any]) -> dict[str, Any]:
+    with SCHEDULED_POSTS_LOCK:
+        posts = [normalize_scheduled_post(post) for post in read_scheduled_posts()]
+    return {"posts": posts}
+
+
+def handle_schedule_post(payload: dict[str, Any]) -> dict[str, Any]:
+    raw_post = payload.get("post") if isinstance(payload.get("post"), dict) else payload
+    platform = str(raw_post.get("platform") or "instagram")
+    if platform not in SUPPORTED_SOCIAL_PLATFORMS:
+        raise ValueError("Unsupported platform")
+
+    scheduled_at = str(raw_post.get("scheduledAt") or "")
+    validate_future_schedule(scheduled_at)
+
+    raw_slides = raw_post.get("slides") or []
+    if not isinstance(raw_slides, list) or len(raw_slides) == 0:
+        raise ValueError("slides are required")
+
+    now = utc_now_iso()
+    post = {
+        "id": str(uuid4()),
+        "platform": platform,
+        "status": "scheduled",
+        "scheduledAt": scheduled_at,
+        "createdAt": now,
+        "updatedAt": now,
+        "slides": [
+            normalize_scheduled_slide(slide, index)
+            for index, slide in enumerate(raw_slides)
+            if isinstance(slide, dict)
+        ],
+    }
+
+    with SCHEDULED_POSTS_LOCK:
+        posts = read_scheduled_posts()
+        posts.insert(0, post)
+        write_scheduled_posts(posts)
+
+    return {"post": normalize_scheduled_post(post)}
+
+
+def handle_update_scheduled_post(payload: dict[str, Any]) -> dict[str, Any]:
+    post_id = str(payload.get("id") or "")
+    scheduled_at = str(payload.get("scheduledAt") or "")
+    if not post_id:
+        raise ValueError("id is required")
+    validate_future_schedule(scheduled_at)
+
+    now = utc_now_iso()
+    with SCHEDULED_POSTS_LOCK:
+        posts = read_scheduled_posts()
+        for index, post in enumerate(posts):
+            if str(post.get("id") or "") == post_id:
+                updated = {
+                    **post,
+                    "scheduledAt": scheduled_at,
+                    "status": "scheduled",
+                    "updatedAt": now,
+                }
+                posts[index] = updated
+                write_scheduled_posts(posts)
+                return {"post": normalize_scheduled_post(updated)}
+
+    raise ValueError("scheduled post not found")
+
+
+def handle_cancel_scheduled_post(payload: dict[str, Any]) -> dict[str, Any]:
+    post_id = str(payload.get("id") or "")
+    if not post_id:
+        raise ValueError("id is required")
+
+    now = utc_now_iso()
+    with SCHEDULED_POSTS_LOCK:
+        posts = read_scheduled_posts()
+        for index, post in enumerate(posts):
+            if str(post.get("id") or "") == post_id:
+                updated = {
+                    **post,
+                    "status": "cancelled",
+                    "updatedAt": now,
+                }
+                posts[index] = updated
+                write_scheduled_posts(posts)
+                return {"post": normalize_scheduled_post(updated)}
+
+    raise ValueError("scheduled post not found")
+
+
+def handle_delete_scheduled_post(payload: dict[str, Any]) -> dict[str, Any]:
+    post_id = str(payload.get("id") or "")
+    if not post_id:
+        raise ValueError("id is required")
+
+    with SCHEDULED_POSTS_LOCK:
+        posts = read_scheduled_posts()
+        remaining = [post for post in posts if str(post.get("id") or "") != post_id]
+        if len(remaining) == len(posts):
+            raise ValueError("scheduled post not found")
+        write_scheduled_posts(remaining)
+
+    return {"deleted": True, "id": post_id}
+
+
 HANDLERS = {
     "process-ocr": handle_process_ocr,
     "process-article-ai": handle_process_article,
     "generate-image": handle_generate_image,
     "generate-layout": handle_generate_layout,
+    "generate-instagram-content": handle_generate_instagram_content,
+    "edit-social-content": handle_edit_social_content,
+    "list-scheduled-posts": handle_list_scheduled_posts,
+    "schedule-post": handle_schedule_post,
+    "update-scheduled-post": handle_update_scheduled_post,
+    "cancel-scheduled-post": handle_cancel_scheduled_post,
+    "delete-scheduled-post": handle_delete_scheduled_post,
     "tts-kannada": handle_tts,
 }
 
@@ -880,21 +1342,20 @@ class BackendHandler(BaseHTTPRequestHandler):
             payload = read_json(self)
             json_response(self, handler(payload))
         except json.JSONDecodeError:
-            json_response(self, {"error": "invalid_json"}, 400)
+            stack = traceback.format_exc()
+            print(stack, file=sys.stderr)
+            json_response(self, {"success": False, "error": "invalid_json", "stack": stack}, 400)
         except ValueError as exc:
-            log_handler_error(name, exc)
             json_response(self, {"error": str(exc)}, 400)
         except RuntimeError as exc:
-            log_handler_error(name, exc)
             message = str(exc)
             status = 500
             if message == "rate_limited":
                 status = 429
             elif message == "credits_exhausted":
                 status = 402
-            json_response(self, {"error": message}, status)
+            json_response(self, {"success": False, "error": message, "stack": stack}, status)
         except Exception as exc:
-            log_handler_error(name, exc)
             json_response(self, {"error": str(exc)}, 500)
 
     def log_message(self, fmt: str, *args: Any) -> None:
@@ -906,7 +1367,7 @@ def main() -> None:
     port = int(os.environ.get("PY_BACKEND_PORT", "8000"))
     server = ThreadingHTTPServer(("127.0.0.1", port), BackendHandler)
     print(f"Python backend running at http://127.0.0.1:{port}")
-    print("Endpoints are available at /functions/v1/{process-ocr,process-article-ai,generate-image,generate-layout,tts-kannada}")
+    print("Endpoints are available at /functions/v1/{process-ocr,process-article-ai,generate-image,generate-layout,generate-instagram-content,edit-social-content,list-scheduled-posts,schedule-post,update-scheduled-post,cancel-scheduled-post,delete-scheduled-post,tts-kannada}")
     server.serve_forever()
 
 

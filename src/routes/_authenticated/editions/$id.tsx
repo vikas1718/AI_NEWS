@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useRouteContext } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useRouteContext } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
@@ -28,8 +28,14 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import type { Article, Newspaper } from "@/lib/api";
+import { hasPermission } from "@/lib/rbac";
 
 export const Route = createFileRoute("/_authenticated/editions/$id")({
+  beforeLoad: ({ context }) => {
+    if (!hasPermission(context.permissions, "access_assigned_pages")) {
+      throw redirect({ to: "/access-denied" });
+    }
+  },
   component: EditionWorkspace,
 });
 
@@ -303,7 +309,7 @@ function PageTurnPreview({
 
 function EditionWorkspace() {
   const { id } = Route.useParams();
-  const { role } = useRouteContext({ from: "/_authenticated" });
+  const ctx = useRouteContext({ from: "/_authenticated" });
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"articles" | "layout" | "preview">("articles");
 
@@ -471,7 +477,10 @@ function EditionWorkspace() {
     ? savedPreviewPages
     : Array.from({ length: totalPages }, (_, index) => index + 1);
   const canEdit =
-    role === "editor" && !["pending_approval", "approved", "published"].includes(newspaper.status);
+    hasPermission(ctx.permissions, "edit_articles") &&
+    !["pending_approval", "approved", "published"].includes(newspaper.status);
+  const canGenerateLayout = canEdit && hasPermission(ctx.permissions, "access_layout_generation");
+  const canSendForReview = canEdit && hasPermission(ctx.permissions, "manage_editorial_workflow");
 
   return (
     <div className="space-y-6">
@@ -494,7 +503,7 @@ function EditionWorkspace() {
             </div>
           </div>
           <div className="flex gap-2">
-            {canEdit && (
+            {canGenerateLayout && (
               <Button
                 variant="outline"
                 onClick={() => genLayout.mutate()}
@@ -508,7 +517,7 @@ function EditionWorkspace() {
                 Generate layout
               </Button>
             )}
-            {canEdit && laidOut.length > 0 && (
+            {canSendForReview && laidOut.length > 0 && (
               <Button onClick={() => sendChief.mutate()} disabled={sendChief.isPending}>
                 <Send className="mr-2 h-4 w-4" />
                 Send to Chief Editor

@@ -1,0 +1,2 @@
+-- Superseded by 20260710134500_invitation_email_only_flow.sql.
+-- Kept as a no-op so older migration history remains ordered without touching missing tables.

@@ -1,0 +1,1 @@
+-- No-op: organization setup is handled by the app-local workspace store.
