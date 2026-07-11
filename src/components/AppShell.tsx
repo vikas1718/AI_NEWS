@@ -1,24 +1,46 @@
-import { Link, useNavigate, useRouteContext, useRouterState } from "@tanstack/react-router";
-import { LayoutDashboard, Newspaper, FileCheck2, LogOut, Menu, Share2, X } from "lucide-react";
+import { Link, useNavigate, useRouteContext, useRouter, useRouterState } from "@tanstack/react-router";
+import {
+  FileCheck2,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Newspaper,
+  Settings,
+  Share2,
+  Users,
+  X,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 import { supabase } from "@/integrations/supabase/client";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { hasPermission, roleLabels, type PermissionKey } from "@/lib/rbac";
+import { hasPermission, roleLabels } from "@/lib/rbac";
 
 type NavRoute =
-  "/dashboard" | "/editions" | "/review" | "/team" | "/settings" | "/organization-settings";
+  | "/dashboard"
+  | "/editions"
+  | "/review"
+  | "/team"
+  | "/settings"
+  | "/organization-settings"
+  | "/multiplatform/instagram";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const ctx = useRouteContext({ from: "/_authenticated" });
   const role = ctx.role;
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const navigate = useNavigate();
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-
-  const can = (permission: PermissionKey) => hasPermission(ctx.permissions, permission);
 
   const items: Array<{
     to: NavRoute;
@@ -30,6 +52,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     { to: "/editions", label: role === "editor" ? "My Editions" : "Editions", icon: Newspaper, show: true },
     { to: "/multiplatform/instagram", label: "Multiplatform", icon: Share2, show: true },
     { to: "/review", label: "Review Queue", icon: FileCheck2, show: role === "chief_editor" },
+    { to: "/team", label: "Organization", icon: Users, show: true },
+    { to: "/settings", label: "Profile", icon: Settings, show: true },
   ].filter((x) => x.show);
 
   async function signOut() {
@@ -45,12 +69,19 @@ export function AppShell({ children }: { children: ReactNode }) {
     setSidebarOpen((open) => !open);
   }
 
+  async function switchOrganization(organizationId: string) {
+    window.localStorage.setItem("ai-news-active-organization-id", organizationId);
+    await router.invalidate();
+    navigate({ to: "/dashboard" });
+  }
+
   useEffect(() => {
     setMobileSidebarOpen(false);
   }, [pathname]);
 
   const roleLabel = ctx.role ? roleLabels[ctx.role] : "Create workspace";
   const organizationName = ctx.organization?.name ?? "Set up team";
+  const activeOrganizationId = ctx.organization?.id;
 
   const sidebar = (
     <div className="flex h-full w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground">
@@ -98,8 +129,25 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="border-t border-sidebar-border p-3 text-xs">
         <div className="mb-2 px-2">
           <div className="truncate font-medium">{ctx.user.email}</div>
-          <div className="truncate text-sidebar-foreground/60">{organizationName}</div>
-          <div className="text-sidebar-foreground/60">{roleLabel}</div>
+          {ctx.organizations.length > 1 && activeOrganizationId ? (
+            <div className="mt-2">
+              <Select value={activeOrganizationId} onValueChange={(value) => void switchOrganization(value)}>
+                <SelectTrigger className="h-8 border-sidebar-border/70 bg-sidebar-accent/30 text-xs text-sidebar-foreground">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ctx.organizations.map((item) => (
+                    <SelectItem key={item.organization.id} value={item.organization.id}>
+                      {item.organization.name} - {roleLabels[item.membership.role]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <div className="truncate text-sidebar-foreground/60">{organizationName}</div>
+          )}
+          <div className="mt-1 text-sidebar-foreground/60">{roleLabel}</div>
         </div>
         <button
           type="button"
@@ -158,6 +206,22 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div className="truncate text-sm font-semibold">{organizationName}</div>
               <div className="truncate text-xs text-muted-foreground">{roleLabel} workspace</div>
             </div>
+            {ctx.organizations.length > 1 && activeOrganizationId && (
+              <div className="ml-auto hidden w-72 sm:block">
+                <Select value={activeOrganizationId} onValueChange={(value) => void switchOrganization(value)}>
+                  <SelectTrigger className="h-9 bg-card">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ctx.organizations.map((item) => (
+                      <SelectItem key={item.organization.id} value={item.organization.id}>
+                        {item.organization.name} - {roleLabels[item.membership.role]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         </header>
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">{children}</div>

@@ -6,7 +6,6 @@ import {
   useRouter,
 } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { Building2, MailPlus, Settings, Shield, Trash2, Users } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -31,13 +30,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  listOrganizationInvitationsBackend,
-  listOrganizationMembersBackend,
-  removeMemberBackend,
-  sendOrganizationInvitationBackend,
-  updateMemberRoleBackend,
-} from "@/lib/organization-backend";
 import { hasPermission, roleLabels, type OrganizationRole } from "@/lib/rbac";
 import { supabaseUntyped } from "@/lib/supabase-untyped";
 
@@ -73,15 +65,9 @@ type InvitationRow = {
 function TeamPage() {
   const ctx = useRouteContext({ from: "/_authenticated" });
   const organization = ctx.organization;
-  const isLocalOrganization = organization?.id.startsWith("local_") ?? false;
   const db = supabaseUntyped;
   const qc = useQueryClient();
   const router = useRouter();
-  const listLocalMembers = useServerFn(listOrganizationMembersBackend);
-  const listLocalInvitations = useServerFn(listOrganizationInvitationsBackend);
-  const sendInvitation = useServerFn(sendOrganizationInvitationBackend);
-  const updateLocalMemberRole = useServerFn(updateMemberRoleBackend);
-  const removeLocalMember = useServerFn(removeMemberBackend);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteForm, setInviteForm] = useState<{
     email: string;
@@ -101,12 +87,6 @@ function TeamPage() {
     queryKey: ["organization-members", organization?.id],
     enabled: Boolean(organization?.id),
     queryFn: async () => {
-      if (isLocalOrganization) {
-        return (await listLocalMembers({
-          data: { organizationId: organization!.id },
-        })) as MemberRow[];
-      }
-
       const { data, error } = await db
         .from("organization_members")
         .select(
@@ -124,30 +104,13 @@ function TeamPage() {
     queryKey: ["organization-sent-invitations", organization?.id],
     enabled: Boolean(organization?.id) && canInvite,
     queryFn: async () => {
-      const localInvitations = isLocalOrganization
-        ? ((await listLocalInvitations({
-            data: { organizationId: organization!.id },
-          })) as InvitationRow[])
-        : [];
-
       const { data, error } = await db
         .from("organization_invitations")
         .select("id,email,role,status,created_at")
         .eq("organization_id", organization!.id)
         .order("created_at", { ascending: false });
-      if (error) {
-        if (isMissingInvitationSchemaError(error)) return localInvitations;
-        throw error;
-      }
-
-      const merged = new Map<string, InvitationRow>();
-      for (const invitation of (data ?? []) as InvitationRow[]) {
-        merged.set(invitation.id, invitation);
-      }
-      for (const invitation of localInvitations) {
-        merged.set(invitation.id, invitation);
-      }
-      return Array.from(merged.values()).sort((a, b) => b.created_at.localeCompare(a.created_at));
+      if (error) throw error;
+      return (data ?? []) as InvitationRow[];
     },
   });
 
@@ -163,33 +126,24 @@ function TeamPage() {
         reason: "Owner is sending an invitation; invitation will be stored in Supabase.",
       });
 
-      const result = await sendInvitation({
-        data: {
-          organizationId: organization!.id,
-          organizationName: organization!.name,
-          logo_url: organization!.logo_url,
-          description: organization!.description,
-          organizationEmail: organization!.email,
-          phone_number: organization!.phone_number,
-          address: organization!.address,
-          organization_type: organization!.organization_type,
-          inviteEmail: invitationEmail,
-          role: inviteForm.role,
-        },
+      const { data: invitationId, error } = await db.rpc("create_organization_invitation", {
+        p_organization_id: organization!.id,
+        p_email: invitationEmail,
+        p_role: inviteForm.role,
       });
-      if (!result.ok) throw new Error(result.error);
+      if (error) throw error;
 
       console.info("[Invitations][send:stored]", {
         authenticatedEmail: ctx.user.email?.toLowerCase() ?? null,
         invitationEmail,
         returnedInvitations: [
           {
-            id: result.invitationId,
+            id: invitationId,
             email: invitationEmail,
-            organizationId: result.organizationId,
+            organizationId: organization!.id,
           },
         ],
-        organizationId: result.organizationId,
+        organizationId: organization!.id,
         reason:
           "Invitation stored in Supabase organization_invitations; receiver lookup is by authenticated email.",
       });
@@ -212,12 +166,6 @@ function TeamPage() {
       memberId: string;
       role: Exclude<OrganizationRole, "owner">;
     }) => {
-      if (isLocalOrganization) {
-        const result = await updateLocalMemberRole({ data: { memberId, role } });
-        if (!result.ok) throw new Error(result.error);
-        return;
-      }
-
       const { error } = await db.rpc("update_organization_member_role", {
         p_member_id: memberId,
         p_role: role,
@@ -234,12 +182,6 @@ function TeamPage() {
 
   const removeMember = useMutation({
     mutationFn: async (memberId: string) => {
-      if (isLocalOrganization) {
-        const result = await removeLocalMember({ data: { memberId } });
-        if (!result.ok) throw new Error(result.error);
-        return;
-      }
-
       const { error } = await db.rpc("remove_organization_member", { p_member_id: memberId });
       if (error) throw error;
     },
@@ -521,15 +463,4 @@ function getErrorMessage(error: unknown, fallback: string) {
     return error.message;
   }
   return fallback;
-}
-
-function isMissingInvitationSchemaError(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const message = "message" in error ? String(error.message).toLowerCase() : "";
-  const code = "code" in error ? String(error.code) : "";
-  return (
-    code === "42P01" ||
-    (message.includes("schema cache") && message.includes("organization_invitations")) ||
-    message.includes("organization_invitations does not exist")
-  );
 }

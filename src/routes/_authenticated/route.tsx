@@ -4,10 +4,6 @@ import type { User } from "@supabase/supabase-js";
 import { AppShell } from "@/components/AppShell";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  getOrganizationBackend,
-  getPendingInvitationCountBackend,
-} from "@/lib/organization-backend";
-import {
   getPermissionsForRole,
   type Organization,
   type OrganizationMember,
@@ -23,6 +19,10 @@ type AuthenticatedContext = {
     email: string;
     full_name: string | null;
   } | null;
+  organizations: Array<{
+    organization: Organization;
+    membership: OrganizationMember;
+  }>;
   organization: Organization | null;
   membership: OrganizationMember | null;
   role: OrganizationRole | null;
@@ -50,54 +50,59 @@ export const Route = createFileRoute("/_authenticated")({
       .select("*, organizations(*)")
       .eq("user_id", user.id)
       .eq("status", "active")
-      .order("joined_at", { ascending: true })
-      .limit(1);
-    const memberships = isMissingOrganizationSchemaError(membershipsResult.error)
+      .order("joined_at", { ascending: true });
+    const membershipRows = isMissingOrganizationSchemaError(membershipsResult.error)
       ? []
       : membershipsResult.data;
 
-    const membershipRow = (memberships ?? [])[0] ?? null;
-    let membership = membershipRow
-      ? ({
-          id: membershipRow.id,
-          organization_id: membershipRow.organization_id,
-          user_id: membershipRow.user_id,
-          role: membershipRow.role,
-          status: membershipRow.status,
-          invited_by: membershipRow.invited_by,
-          joined_at: membershipRow.joined_at,
-          created_at: membershipRow.created_at,
-          updated_at: membershipRow.updated_at,
-        } satisfies OrganizationMember)
-      : null;
-    let organization = (membershipRow?.organizations ?? null) as Organization | null;
-    let role = membership?.role ?? null;
+    const organizations = (membershipRows ?? [])
+      .map((row) => {
+        const organization = row.organizations as Organization | null;
+        if (!organization) return null;
+        return {
+          organization,
+          membership: {
+            id: row.id,
+            organization_id: row.organization_id,
+            user_id: row.user_id,
+            role: row.role,
+            status: row.status,
+            invited_by: row.invited_by,
+            joined_at: row.joined_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+          } satisfies OrganizationMember,
+        };
+      })
+      .filter((row): row is { organization: Organization; membership: OrganizationMember } =>
+        Boolean(row),
+      )
+      .sort((a, b) => {
+        if (a.membership.role === "owner" && b.membership.role !== "owner") return -1;
+        if (a.membership.role !== "owner" && b.membership.role === "owner") return 1;
+        return a.membership.joined_at.localeCompare(b.membership.joined_at);
+      });
+
+    const storedOrganizationId = getStoredActiveOrganizationId();
+    const selectedOrganization =
+      organizations.find((item) => item.organization.id === storedOrganizationId) ??
+      organizations[0] ??
+      null;
+    const membership = selectedOrganization?.membership ?? null;
+    const organization = selectedOrganization?.organization ?? null;
+    const role = membership?.role ?? null;
     const permissionResult = role
       ? await db.from("role_permissions").select("permission_key").eq("role_key", role)
       : { data: null, error: null };
     const permissionRows = isMissingOrganizationSchemaError(permissionResult.error)
       ? null
       : permissionResult.data;
-    let permissions =
+    const permissions =
       permissionRows && permissionRows.length > 0
         ? permissionRows.map((row: { permission_key: PermissionKey }) => row.permission_key)
         : getPermissionsForRole(role);
 
-    if (!organization) {
-      const localOrganization = await getOrganizationBackend().catch(() => null);
-      if (localOrganization) {
-        organization = localOrganization.organization;
-        membership = localOrganization.membership;
-        role = membership.role;
-        permissions = getPermissionsForRole(role);
-      }
-    }
-
-    const [databasePendingInvitationCount, localPendingInvitationCount] = await Promise.all([
-      getDatabasePendingInvitationCount(db, user.email ?? null),
-      getPendingInvitationCountBackend().catch(() => 0),
-    ]);
-    const pendingInvitationCount = databasePendingInvitationCount + localPendingInvitationCount;
+    const pendingInvitationCount = await getDatabasePendingInvitationCount(db, user.email ?? null);
 
     const pathname = location.pathname;
     const isOnboarding = pathname === "/onboarding";
@@ -106,6 +111,7 @@ export const Route = createFileRoute("/_authenticated")({
     return {
       user,
       profile: profile ?? null,
+      organizations,
       organization,
       membership,
       role,
@@ -116,15 +122,21 @@ export const Route = createFileRoute("/_authenticated")({
   component: AuthenticatedLayout,
 });
 
+function getStoredActiveOrganizationId() {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem("ai-news-active-organization-id");
+}
+
 function isMissingOrganizationSchemaError(error: unknown) {
   if (!error || typeof error !== "object" || !("message" in error)) return false;
   const message = String(error.message).toLowerCase();
   return (
     message.includes("schema cache") &&
     (message.includes("organization_members") ||
+      message.includes("organizations") ||
       message.includes("organization_invitations") ||
       message.includes("role_permissions"))
-  );
+  ) || message.includes('relation "public.organizations" does not exist');
 }
 
 async function getDatabasePendingInvitationCount(db: typeof supabaseUntyped, email: string | null) {
