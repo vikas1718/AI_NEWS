@@ -1,7 +1,7 @@
 import { createFileRoute, useRouteContext } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, Bookmark, Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Clock, Eye, Globe2, Heart, Image, Instagram, Loader2, MessageCircle, MoreHorizontal, Repeat2, Search, Send, Share2, ThumbsUp } from "lucide-react";
+import { BarChart3, Bookmark, Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Clock, Eye, Globe2, Heart, Image, Instagram, Loader2, MessageCircle, MoreHorizontal, Repeat2, Search, Send, Share2, ThumbsUp, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
@@ -15,7 +15,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
-import { aiFn, scheduleFn, type Article, type InstagramSlideContent, type Newspaper, type ScheduledPost } from "@/lib/api";
+import { aiFn, type Article, type InstagramSlideContent, type Newspaper, type ScheduledPost } from "@/lib/api";
+import { hasPermission } from "@/lib/rbac";
+import { supabaseUntyped } from "@/lib/supabase-untyped";
 
 export const Route = createFileRoute("/_authenticated/multiplatform_/instagram")({
   component: InstagramPublishing,
@@ -192,6 +194,24 @@ type PublishResult = {
   message?: string;
 };
 
+type SocialPostRow = {
+  id: string;
+  organization_id: string;
+  newspaper_id: string | null;
+  article_ids: string[] | null;
+  platform: PlatformId;
+  status: ScheduledPost["status"];
+  caption: string | null;
+  summary: string | null;
+  content: {
+    slides?: ScheduledPost["slides"];
+  } | null;
+  scheduled_at: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type ScheduledPostGroup = {
   key: string;
   scheduledAt: string;
@@ -207,6 +227,43 @@ function platformLabel(platformId: PlatformId) {
 
 function platformLogo(platformId: PlatformId) {
   return publishingPlatforms.find((platform) => platform.id === platformId)?.logo ?? InstagramBrandLogo;
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    return [record.message, record.details, record.hint]
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .join(" ");
+  }
+  return "";
+}
+
+function socialPostStatusLabel(status: ScheduledPost["status"]) {
+  switch (status) {
+    case "draft":
+      return "Draft";
+    case "submitted":
+      return "Submitted";
+    case "under_review":
+      return "Under Review";
+    case "approved":
+      return "Approved";
+    case "rejected":
+      return "Rejected";
+    case "scheduled":
+      return "Scheduled";
+    case "published":
+      return "Published";
+    case "cancelled":
+      return "Cancelled";
+    case "failed":
+      return "Failed";
+    default:
+      return "Unknown";
+  }
 }
 
 function PlatformPublishIcon({ platform }: { platform: PlatformId }) {
@@ -286,6 +343,40 @@ function articleTitle(article: Article) {
 
 function articleDescription(article: Article) {
   return article.summary || article.corrected_text || article.raw_text || "No description available.";
+}
+
+function editionDateLabel(value: string | null | undefined) {
+  if (!value) return "Date unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function editionStatusLabel(status: string | null | undefined) {
+  return (status || "draft")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function scheduledPostFromSocialRow(row: SocialPostRow): ScheduledPost {
+  return {
+    id: row.id,
+    platform: row.platform,
+    status: row.status,
+    scheduledAt: row.scheduled_at ?? row.published_at ?? row.created_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    slides: Array.isArray(row.content?.slides) ? row.content.slides : [],
+  };
 }
 
 function scheduledPostArticleKey(post: ScheduledPost) {
@@ -700,6 +791,12 @@ function slideContentFromAi(
 function InstagramPublishing() {
   const ctx = useRouteContext({ from: "/_authenticated" });
   const organizationId = ctx.organization?.id;
+  const canPublishSocial = hasPermission(ctx.permissions, "publish_articles");
+  const canReviewSocial = hasPermission(ctx.permissions, "approve_articles") || canPublishSocial;
+  const canPrepareSocial =
+    hasPermission(ctx.permissions, "create_articles") ||
+    hasPermission(ctx.permissions, "submit_for_review") ||
+    ctx.role === "owner";
   const socialBranding = useMemo(
     () => createSocialBranding(ctx.organization?.name),
     [ctx.organization?.name],
@@ -710,9 +807,14 @@ function InstagramPublishing() {
   const [publishError, setPublishError] = useState("");
   const [publishResults, setPublishResults] = useState<PublishResult[]>([]);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [postSource, setPostSource] = useState<"edition" | "custom">("edition");
+  const [customContent, setCustomContent] = useState("");
+  const [customImagePreviewUrl, setCustomImagePreviewUrl] = useState("");
+  const [customImageName, setCustomImageName] = useState("");
   const [selectionMode, setSelectionMode] = useState<"ai" | "manual">("ai");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
+  const [selectedEditionId, setSelectedEditionId] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [summary, setSummary] = useState("");
   const [caption, setCaption] = useState("");
@@ -740,30 +842,35 @@ function InstagramPublishing() {
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
 
-  const { data: currentEdition } = useQuery({
-    queryKey: ["instagram-current-edition", organizationId],
+  const { data: editionsData, isLoading: isLoadingEditions } = useQuery({
+    queryKey: ["social-editions", organizationId],
     enabled: Boolean(organizationId),
     queryFn: async () => {
       const { data, error } = await supabase
         .from("newspapers")
         .select("*")
         .eq("organization_id", organizationId!)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .order("edition_date", { ascending: false })
+        .order("created_at", { ascending: false });
       if (error) throw error;
-      return data as Newspaper | null;
+      return (data ?? []) as Newspaper[];
     },
   });
 
+  const editions = useMemo(() => (Array.isArray(editionsData) ? editionsData : []), [editionsData]);
+  const currentEdition = useMemo(
+    () => editions.find((edition) => edition.id === selectedEditionId) ?? null,
+    [editions, selectedEditionId],
+  );
+
   const { data: articlesData, isLoading } = useQuery({
-    queryKey: ["instagram-edition-articles", currentEdition?.id, organizationId],
-    enabled: Boolean(currentEdition?.id && currentEdition?.organization_id === organizationId),
+    queryKey: ["instagram-edition-articles", selectedEditionId, organizationId],
+    enabled: Boolean(selectedEditionId && currentEdition?.organization_id === organizationId),
     queryFn: async () => {
       const { data, error } = await supabase
         .from("articles")
         .select("*")
-        .eq("newspaper_id", currentEdition!.id)
+        .eq("newspaper_id", selectedEditionId)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as unknown as Article[];
@@ -776,6 +883,36 @@ function InstagramPublishing() {
     () => articles.map(rankArticle).sort((a, b) => b.aiScore - a.aiScore),
     [articles],
   );
+  const customArticle = useMemo<Article | null>(() => {
+    const cleanContent = customContent.trim();
+    if (postSource !== "custom" || (!cleanContent && !customImagePreviewUrl)) return null;
+    const firstLine = cleanContent.split("\n").find((line) => line.trim())?.trim();
+    const headline = firstLine?.slice(0, 90) || "New social post";
+    const now = new Date().toISOString();
+
+    return {
+      id: "custom-social-post",
+      newspaper_id: "",
+      raw_input_type: "manual",
+      raw_text: cleanContent || headline,
+      ocr_text: null,
+      corrected_text: cleanContent || headline,
+      headline,
+      summary: cleanContent || headline,
+      category: "Other",
+      background_color: null,
+      priority_score: null,
+      image_url: customImagePreviewUrl || null,
+      image_source: customImageName || null,
+      workflow_status: {},
+      page_number: null,
+      position: null,
+      headline_size: null,
+      image_size: null,
+      column_count: null,
+      created_at: now,
+    };
+  }, [customContent, customImageName, customImagePreviewUrl, postSource]);
 
   const aiSelectedArticles = useMemo(() => rankedArticles.slice(0, 6), [rankedArticles]);
   const aiSelectedIds = useMemo(() => aiSelectedArticles.map((article) => article.id), [aiSelectedArticles]);
@@ -784,8 +921,11 @@ function InstagramPublishing() {
     [rankedArticles, selectedIds],
   );
   const previewArticles = useMemo(
-    () => (selectedArticles.length > 0 ? selectedArticles : aiSelectedArticles),
-    [aiSelectedArticles, selectedArticles],
+    () => {
+      if (postSource === "custom") return customArticle ? [customArticle] : [];
+      return selectedArticles.length > 0 ? selectedArticles : aiSelectedArticles;
+    },
+    [aiSelectedArticles, customArticle, postSource, selectedArticles],
   );
   const previewSlides = useMemo(() => previewArticles.slice(0, 6), [previewArticles]);
   const activeIndex = previewSlides.length === 0 ? 0 : Math.min(carouselIndex, previewSlides.length - 1);
@@ -816,6 +956,55 @@ function InstagramPublishing() {
     const matchesCategory = category === "all" || article.category === category;
     return matchesSearch && matchesCategory;
   }), [category, rankedArticles, search]);
+
+  useEffect(() => {
+    if (editions.length === 0) {
+      setSelectedEditionId("");
+      return;
+    }
+
+    setSelectedEditionId((current) =>
+      editions.some((edition) => edition.id === current) ? current : editions[0].id,
+    );
+  }, [editions]);
+
+  useEffect(() => {
+    setSummary("");
+    setCaption("");
+    setSlideContent({});
+    setPublishResults([]);
+    setPublishError("");
+    setScheduleConfirmation("");
+    setCarouselIndex(0);
+    if (postSource === "custom") {
+      setSelectionMode("manual");
+      setSelectedIds([]);
+    } else {
+      setSelectionMode("ai");
+    }
+  }, [postSource]);
+
+  useEffect(() => {
+    if (!customImagePreviewUrl) return undefined;
+    return () => {
+      URL.revokeObjectURL(customImagePreviewUrl);
+    };
+  }, [customImagePreviewUrl]);
+
+  useEffect(() => {
+    if (postSource === "custom") return;
+    setSelectionMode("ai");
+    setSelectedIds([]);
+    setSearch("");
+    setCategory("all");
+    setSummary("");
+    setCaption("");
+    setSlideContent({});
+    setPublishResults([]);
+    setPublishError("");
+    setScheduleConfirmation("");
+    setCarouselIndex(0);
+  }, [postSource, selectedEditionId]);
 
   useEffect(() => {
     if (selectionMode !== "ai" || aiSelectedIds.length === 0) return;
@@ -852,12 +1041,27 @@ function InstagramPublishing() {
   useEffect(() => {
     let cancelled = false;
     setIsLoadingScheduledPosts(true);
-    scheduleFn.list()
-      .then(({ posts }) => {
+    if (!organizationId) {
+      setScheduledPosts([]);
+      setIsLoadingScheduledPosts(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    supabaseUntyped
+      .from("social_posts")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: false })
+      .limit(50)
+      .then(({ data, error }: { data: SocialPostRow[] | null; error: Error | null }) => {
+        if (error) throw error;
+        const posts = (data ?? []).map(scheduledPostFromSocialRow);
         if (!cancelled) setScheduledPosts(posts);
       })
       .catch((error) => {
-        console.error("Scheduled posts load failed:", error);
+        console.error("Social posts load failed:", error);
       })
       .finally(() => {
         if (!cancelled) setIsLoadingScheduledPosts(false);
@@ -865,7 +1069,7 @@ function InstagramPublishing() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [organizationId]);
 
   function togglePublishPlatform(platform: PlatformId) {
     setSelectedPlatforms((current) =>
@@ -881,6 +1085,14 @@ function InstagramPublishing() {
     setSelectedIds((current) =>
       current.includes(articleId) ? current.filter((id) => id !== articleId) : [...current, articleId],
     );
+  }
+
+  function handleCustomImageChange(file: File | null) {
+    setCustomImagePreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return file ? URL.createObjectURL(file) : "";
+    });
+    setCustomImageName(file?.name ?? "");
   }
 
   async function generateSummary() {
@@ -939,7 +1151,7 @@ function InstagramPublishing() {
 
   async function applyChanges() {
     const instructions = modificationRequest.trim();
-    console.log("Apply Changes clicked");
+    console.log("AI Content Assistant clicked");
     console.log("Instructions:", instructions);
     if (!activeArticle || !instructions || isApplyingChanges) return;
 
@@ -978,7 +1190,7 @@ function InstagramPublishing() {
       });
       setModificationRequest("");
     } catch (error) {
-      console.error("Request Changes failed:", error);
+      console.error("AI Content Assistant failed:", error);
       setModificationError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsApplyingChanges(false);
@@ -1049,24 +1261,75 @@ function InstagramPublishing() {
     });
   }
 
-  async function publishToPlatform(platform: PlatformId) {
+  async function createSocialPost(platform: PlatformId, status: ScheduledPost["status"], scheduledAt?: string) {
+    if (!organizationId) {
+      throw new Error("Select an organization before creating a social post.");
+    }
+
+    if (postSource === "edition" && !currentEdition?.id) {
+      throw new Error("Select an edition before creating a social post.");
+    }
+
+    if (postSource === "custom" && !customArticle) {
+      throw new Error("Add content or upload an image before creating a social post.");
+    }
+
     const slides = buildScheduledSlides();
     if (slides.length === 0) {
       throw new Error("No content available to publish.");
     }
 
-    await Promise.resolve({
+    const now = new Date().toISOString();
+    const articleIds = slides.map((slide) => slide.articleId).filter(isUuid);
+    const payload = {
+      organization_id: organizationId,
+      newspaper_id: postSource === "edition" ? currentEdition?.id ?? null : null,
+      article_ids: articleIds,
       platform,
-      caption: slides[0]?.caption ?? "",
-      mentions: slides.flatMap((slide) => slide.mentions),
-      hashtags: slides.flatMap((slide) => slide.hashtags),
-      images: slides.map((slide) => slide.imageUrl).filter(Boolean),
-    });
+      status,
+      caption: slides[0]?.caption ?? caption,
+      summary: summary || createSummary(previewArticles),
+      content: {
+        socialOnly: true,
+        source: "multiplatform_editor",
+        postSource,
+        customContent: postSource === "custom" ? customContent.trim() : null,
+        customImageName: postSource === "custom" ? customImageName || null : null,
+        slides,
+        articleIds,
+        platforms: selectedPlatforms,
+        mentions: slides.flatMap((slide) => slide.mentions),
+        hashtags: slides.flatMap((slide) => slide.hashtags),
+        imageUrls: slides.map((slide) => slide.imageUrl).filter(Boolean),
+      },
+      scheduled_at: status === "scheduled" ? scheduledAt : null,
+      published_at: status === "published" ? now : null,
+      reviewed_by: ["approved", "rejected"].includes(status) ? ctx.user.id : null,
+      reviewed_at: ["approved", "rejected"].includes(status) ? now : null,
+      created_by: ctx.user.id,
+    };
+
+    const { data, error } = await supabaseUntyped
+      .from("social_posts")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("Social post save failed:", { platform, status, error, payload });
+      throw new Error(errorMessage(error) || "Unable to save the social post.");
+    }
+    return scheduledPostFromSocialRow(data as SocialPostRow);
   }
 
   async function publishSelectedPlatforms() {
     setPublishResults([]);
     setPublishError("");
+
+    if (!canPublishSocial) {
+      setPublishError("You can prepare and schedule social posts, but publishing now requires publisher permission.");
+      return;
+    }
 
     if (selectedPlatforms.length === 0) {
       setPublishError("Please select at least one platform before publishing.");
@@ -1076,10 +1339,15 @@ function InstagramPublishing() {
     setIsPublishing(true);
     const results = await Promise.allSettled(
       selectedPlatforms.map(async (platform) => {
-        await publishToPlatform(platform);
-        return platform;
+        const post = await createSocialPost(platform, "published");
+        return { platform, post };
       }),
     );
+    const createdPosts = results
+      .filter((result): result is PromiseFulfilledResult<{ platform: PlatformId; post: ScheduledPost }> => result.status === "fulfilled")
+      .map((result) => result.value.post);
+
+    setScheduledPosts((current) => [...createdPosts, ...current]);
 
     setPublishResults(
       results.map((result, index) => {
@@ -1099,19 +1367,12 @@ function InstagramPublishing() {
   }
 
   async function createScheduledPostsForSelectedPlatforms(isoScheduledAt: string) {
-    const slides = buildScheduledSlides();
     const results = await Promise.allSettled(
-      selectedPlatforms.map((platform) =>
-        scheduleFn.create({
-          platform,
-          scheduledAt: isoScheduledAt,
-          slides,
-        }),
-      ),
+      selectedPlatforms.map((platform) => createSocialPost(platform, "scheduled", isoScheduledAt)),
     );
     const createdPosts = results
-      .filter((result): result is PromiseFulfilledResult<{ post: ScheduledPost }> => result.status === "fulfilled")
-      .map((result) => result.value.post);
+      .filter((result): result is PromiseFulfilledResult<ScheduledPost> => result.status === "fulfilled")
+      .map((result) => result.value);
     const failedPlatforms = results
       .map((result, index) => (result.status === "rejected" ? selectedPlatforms[index] : null))
       .filter((platform): platform is PlatformId => Boolean(platform));
@@ -1120,6 +1381,81 @@ function InstagramPublishing() {
 
     if (failedPlatforms.length > 0) {
       throw new Error(`Unable to schedule: ${failedPlatforms.map(platformLabel).join(", ")}.`);
+    }
+  }
+
+  async function createReviewPosts(status: "draft" | "submitted") {
+    setPublishResults([]);
+    setPublishError("");
+    setScheduleConfirmation("");
+
+    if (selectedPlatforms.length === 0) {
+      setPublishError("Please select at least one platform.");
+      return;
+    }
+
+    setIsPublishing(true);
+    try {
+      const results = await Promise.allSettled(
+        selectedPlatforms.map((platform) => createSocialPost(platform, status)),
+      );
+      const createdPosts = results
+        .filter((result): result is PromiseFulfilledResult<ScheduledPost> => result.status === "fulfilled")
+        .map((result) => result.value);
+      const failedPlatforms = results
+        .map((result, index) => (result.status === "rejected" ? selectedPlatforms[index] : null))
+        .filter((platform): platform is PlatformId => Boolean(platform));
+      const failureMessages = results
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => errorMessage(result.reason))
+        .filter(Boolean);
+      const uniqueFailureMessage = [...new Set(failureMessages)][0];
+
+      setScheduledPosts((current) => [...createdPosts, ...current]);
+      if (failedPlatforms.length > 0) {
+        throw new Error(
+          `Unable to save: ${failedPlatforms.map(platformLabel).join(", ")}.${uniqueFailureMessage ? ` ${uniqueFailureMessage}` : ""}`,
+        );
+      }
+      setScheduleConfirmation(status === "submitted" ? "Social post submitted for review." : "Social post draft saved.");
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : "Unable to save the social post.");
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
+  async function updateSocialPostsStatus(
+    postIds: string[],
+    status: ScheduledPost["status"],
+    extra: Record<string, unknown> = {},
+  ) {
+    const patch = {
+      status,
+      ...extra,
+      ...(status === "approved" || status === "rejected"
+        ? { reviewed_by: ctx.user.id, reviewed_at: new Date().toISOString() }
+        : {}),
+      ...(status === "published" ? { published_at: new Date().toISOString() } : {}),
+    };
+    const results = await Promise.allSettled(postIds.map(async (postId) => {
+      const { data, error } = await supabaseUntyped
+        .from("social_posts")
+        .update(patch)
+        .eq("id", postId)
+        .eq("organization_id", organizationId)
+        .select("*")
+        .single();
+      if (error) throw error;
+      return scheduledPostFromSocialRow(data as SocialPostRow);
+    }));
+    const updatedPosts = results
+      .filter((result): result is PromiseFulfilledResult<ScheduledPost> => result.status === "fulfilled")
+      .map((result) => result.value);
+    const updatedById = new Map(updatedPosts.map((post) => [post.id, post]));
+    setScheduledPosts((current) => current.map((post) => updatedById.get(post.id) ?? post));
+    if (updatedPosts.length !== postIds.length) {
+      throw new Error("Unable to update every selected social post.");
     }
   }
 
@@ -1132,6 +1468,11 @@ function InstagramPublishing() {
     setPublishResults([]);
     setPublishError("");
     setScheduleConfirmation("");
+
+    if (!canPublishSocial) {
+      setPublishError("Submit the social post for review. Publishing and scheduling require publisher permission.");
+      return;
+    }
 
     if (selectedPlatforms.length === 0) {
       setPublishError("Please select at least one platform before publishing.");
@@ -1222,11 +1563,26 @@ function InstagramPublishing() {
     try {
       if (editingScheduleIds.length > 0) {
         const results = await Promise.allSettled(
-          editingScheduleIds.map((postId) => scheduleFn.update(postId, isoScheduledAt)),
+          editingScheduleIds.map(async (postId) => {
+            const { data, error } = await supabaseUntyped
+              .from("social_posts")
+              .update({
+                scheduled_at: isoScheduledAt,
+                status: "scheduled",
+                published_at: null,
+                error_message: null,
+              })
+              .eq("id", postId)
+              .eq("organization_id", organizationId)
+              .select("*")
+              .single();
+            if (error) throw error;
+            return scheduledPostFromSocialRow(data as SocialPostRow);
+          }),
         );
         const updatedPosts = results
-          .filter((result): result is PromiseFulfilledResult<{ post: ScheduledPost }> => result.status === "fulfilled")
-          .map((result) => result.value.post);
+          .filter((result): result is PromiseFulfilledResult<ScheduledPost> => result.status === "fulfilled")
+          .map((result) => result.value);
         if (updatedPosts.length !== editingScheduleIds.length) {
           throw new Error("Unable to update every selected platform schedule.");
         }
@@ -1256,10 +1612,20 @@ function InstagramPublishing() {
 
   async function cancelScheduledPosts(postIds: string[]) {
     try {
-      const results = await Promise.allSettled(postIds.map((postId) => scheduleFn.cancel(postId)));
+      const results = await Promise.allSettled(postIds.map(async (postId) => {
+        const { data, error } = await supabaseUntyped
+          .from("social_posts")
+          .update({ status: "cancelled" })
+          .eq("id", postId)
+          .eq("organization_id", organizationId)
+          .select("*")
+          .single();
+        if (error) throw error;
+        return scheduledPostFromSocialRow(data as SocialPostRow);
+      }));
       const cancelledPosts = results
-        .filter((result): result is PromiseFulfilledResult<{ post: ScheduledPost }> => result.status === "fulfilled")
-        .map((result) => result.value.post);
+        .filter((result): result is PromiseFulfilledResult<ScheduledPost> => result.status === "fulfilled")
+        .map((result) => result.value);
       const cancelledById = new Map(cancelledPosts.map((post) => [post.id, post]));
       setScheduledPosts((current) => current.map((item) => cancelledById.get(item.id) ?? item));
     } catch (error) {
@@ -1269,10 +1635,19 @@ function InstagramPublishing() {
 
   async function deleteScheduledPosts(postIds: string[]) {
     try {
-      const results = await Promise.allSettled(postIds.map((postId) => scheduleFn.delete(postId)));
+      const results = await Promise.allSettled(postIds.map((postId) =>
+        supabaseUntyped
+          .from("social_posts")
+          .delete()
+          .eq("id", postId)
+          .eq("organization_id", organizationId),
+      ));
       const deletedIds = new Set(
         results
-          .map((result, index) => (result.status === "fulfilled" ? postIds[index] : null))
+          .map((result, index) => {
+            if (result.status !== "fulfilled" || result.value.error) return null;
+            return postIds[index];
+          })
           .filter((postId): postId is string => Boolean(postId)),
       );
       setScheduledPosts((current) => current.filter((post) => !deletedIds.has(post.id)));
@@ -1285,6 +1660,9 @@ function InstagramPublishing() {
     <div className="space-y-6">
       <div>
         <h1 className="font-serif text-3xl font-bold">Multi-Platform Publishing</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Create social-only posts from selected edition stories without changing the edition publication status.
+        </p>
       </div>
 
       <PlatformSelector
@@ -1296,9 +1674,9 @@ function InstagramPublishing() {
 
       <div className="space-y-6">
         <div>
-          <h2 className="font-serif text-3xl font-bold">Instagram Publishing</h2>
+          <h2 className="font-serif text-3xl font-bold">Social-Only Publishing</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Create Instagram-ready content from your newspaper edition.
+          Select stories, prepare the social card and caption, then publish now or schedule only the selected platforms.
         </p>
       </div>
 
@@ -1306,10 +1684,125 @@ function InstagramPublishing() {
         <aside className="space-y-4">
           <Card className="shadow-sm">
             <CardHeader>
-              <CardTitle>Select News From AI Editor</CardTitle>
+              <CardTitle>Create Social Post</CardTitle>
               <CardDescription>
-                AI automatically analyzes all news articles and selects the most engaging and platform-appropriate
-                stories.
+                Start from a fresh post or select stories from an existing edition.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-2">
+              <Button
+                type="button"
+                variant={postSource === "custom" ? "default" : "outline"}
+                onClick={() => setPostSource("custom")}
+              >
+                Create New Post
+              </Button>
+              <Button
+                type="button"
+                variant={postSource === "edition" ? "default" : "outline"}
+                onClick={() => setPostSource("edition")}
+              >
+                Use Edition Articles
+              </Button>
+            </CardContent>
+          </Card>
+
+          {postSource === "custom" && (
+            <Card className="shadow-sm">
+              <CardHeader>
+                <CardTitle>1. Add Content</CardTitle>
+                <CardDescription>
+                  Add the post text, attach an image, then generate a social caption with AI.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Textarea
+                  className="min-h-36"
+                  placeholder="Add the content here. Paste a news brief, announcement, or raw story idea for the social post."
+                  value={customContent}
+                  onChange={(event) => setCustomContent(event.target.value)}
+                />
+
+                <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed bg-muted/20 px-4 py-6 text-center text-sm transition hover:border-primary/50 hover:bg-muted/40">
+                  <Upload className="mb-2 h-5 w-5 text-muted-foreground" />
+                  <span className="font-medium">Upload image</span>
+                  <span className="mt-1 text-xs text-muted-foreground">PNG, JPG, or WebP for the social card</span>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={(event) => handleCustomImageChange(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+
+                {customImagePreviewUrl && (
+                  <div className="overflow-hidden rounded-lg border bg-background">
+                    <img src={customImagePreviewUrl} alt="Uploaded social post preview" className="h-44 w-full object-cover" />
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-muted-foreground">
+                      <span className="min-w-0 truncate">{customImageName}</span>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => handleCustomImageChange(null)}>
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                <Button className="w-full" onClick={generateSummary} disabled={!customArticle || isGeneratingInstagramPost}>
+                  {isGeneratingInstagramPost ? "Generating..." : "Generate Caption With AI"}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {postSource === "edition" && (
+          <>
+          <Card className="shadow-sm">
+            <CardHeader>
+              <CardTitle>1. Select Edition</CardTitle>
+              <CardDescription>
+                Choose the newspaper edition first. Only articles from this edition will be available for social posts.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Select value={selectedEditionId} onValueChange={setSelectedEditionId} disabled={isLoadingEditions || editions.length === 0}>
+                <SelectTrigger>
+                  <SelectValue placeholder={isLoadingEditions ? "Loading editions..." : "Choose an edition"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {editions.map((edition) => (
+                    <SelectItem key={edition.id} value={edition.id}>
+                      {edition.edition_name} - {editionDateLabel(edition.edition_date)} - {editionStatusLabel(edition.status)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {currentEdition ? (
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                  <div className="font-semibold">{currentEdition.edition_name}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span>{editionDateLabel(currentEdition.edition_date)}</span>
+                    <Badge variant="secondary">{editionStatusLabel(currentEdition.status)}</Badge>
+                    <span>{isLoading ? "Loading articles" : `${articles.length} articles`}</span>
+                  </div>
+                </div>
+              ) : isLoadingEditions ? (
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  Loading editions...
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  No editions found in this organization.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-sm">
+            <CardHeader>
+              <CardTitle>2. Select Articles</CardTitle>
+              <CardDescription>
+                Pick the stories from the selected edition. AI can choose the strongest social-ready stories for you.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1366,13 +1859,19 @@ function InstagramPublishing() {
                 </Select>
               </div>
 
-              {isLoading && <div className="text-sm text-muted-foreground">Loading articles...</div>}
-              {!isLoading && filteredArticles.length === 0 && (
+              {!currentEdition && (
+                <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  Select an edition to view its articles.
+                </div>
+              )}
+              {currentEdition && isLoading && <div className="text-sm text-muted-foreground">Loading articles...</div>}
+              {currentEdition && !isLoading && filteredArticles.length === 0 && (
                 <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                   No articles found.
                 </div>
               )}
 
+              {currentEdition && (
               <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
                 {(selectionMode === "ai" ? filteredArticles.filter((article) => aiSelectedArticles.some((selected) => selected.id === article.id)) : filteredArticles).map((article) => (
                   <NewsSelectionRow
@@ -1383,6 +1882,7 @@ function InstagramPublishing() {
                   />
                 ))}
               </div>
+              )}
 
               <div className="flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
                 <span>
@@ -1396,6 +1896,8 @@ function InstagramPublishing() {
               </Button>
             </CardContent>
           </Card>
+          </>
+          )}
         </aside>
 
         <main className="space-y-4">
@@ -1453,12 +1955,12 @@ function InstagramPublishing() {
               <div className="space-y-4">
                 <Card className="shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">Request Changes</CardTitle>
+                    <CardTitle className="text-base">AI Content Assistant</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <Textarea
                       className="min-h-36"
-                      placeholder="Example: Make the caption shorter. Use Kannada. Add more emojis. Focus on Solar news. Reduce hashtags."
+                      placeholder="Ask AI to improve this post. Example: Make the caption shorter, write it in Kannada, add stronger hashtags, or focus on the traffic update."
                       value={modificationRequest}
                       onChange={(event) => {
                         setModificationRequest(event.target.value);
@@ -1473,7 +1975,7 @@ function InstagramPublishing() {
                         disabled={!activeArticle || !modificationRequest.trim() || isApplyingChanges}
                       >
                         {isApplyingChanges && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        {isApplyingChanges ? "Applying..." : "Apply Changes"}
+                        {isApplyingChanges ? "Updating..." : "Update With AI"}
                       </Button>
                     </div>
                   </CardContent>
@@ -1481,91 +1983,26 @@ function InstagramPublishing() {
 
                 <Card className="shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base">4. Publish Settings</CardTitle>
+                    <CardTitle className="text-base">4. Editorial Review</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <RadioGroup
-                      value={publishMode}
-                      onValueChange={(value) => {
-                        setPublishMode(value as "now" | "later");
-                        setPublishError("");
-                        setScheduleError("");
-                        setScheduleConfirmation("");
-                      }}
-                      className="gap-3"
-                    >
-                      <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-background px-3 py-3 text-sm font-medium transition hover:border-primary/40 hover:bg-muted/30">
-                        <RadioGroupItem value="now" />
-                        <span>Publish Now</span>
-                      </label>
-                      <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-background px-3 py-3 text-sm font-medium transition hover:border-primary/40 hover:bg-muted/30">
-                        <RadioGroupItem value="later" />
-                        <span>Schedule for Later</span>
-                      </label>
-                    </RadioGroup>
-
-                    {publishMode === "later" && (
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-2">
-                          <div className="text-sm font-semibold">Date</div>
-                          <Popover open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
-                            <PopoverTrigger asChild>
-                              <button
-                                type="button"
-                                className="flex h-12 w-full items-center justify-between rounded-xl border bg-background px-3 text-left text-sm shadow-sm transition hover:border-primary/40 hover:bg-muted/20 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                              >
-                                <span className="font-medium">{scheduleDateLabel(scheduleDate)}</span>
-                                <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-                              </button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <CalendarPicker
-                                mode="single"
-                                captionLayout="dropdown"
-                                startMonth={new Date(new Date().getFullYear(), new Date().getMonth(), 1)}
-                                endMonth={new Date(new Date().getFullYear() + 5, 11, 31)}
-                                selected={dateFromLocalInput(scheduleDate)}
-                                disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }}
-                                onSelect={(date) => {
-                                  if (!date) return;
-                                  setScheduleDate(localDateInputValue(date));
-                                  setScheduleError("");
-                                  setIsDatePickerOpen(false);
-                                }}
-                              />
-                            </PopoverContent>
-                          </Popover>
+                    {canPrepareSocial ? (
+                      <div className="space-y-3">
+                        <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                          Editors prepare social posts and submit them for chief editor approval before publishing.
                         </div>
-                        <div className="space-y-2">
-                          <div className="text-sm font-semibold">Time</div>
-                          <div className="relative">
-                            <Input
-                              type="text"
-                              placeholder="09:00 AM"
-                              value={scheduleTime}
-                              onChange={(event) => {
-                                setScheduleTime(event.target.value);
-                                setScheduleError("");
-                              }}
-                              onBlur={() => {
-                                const formatted = formatTimeInput(scheduleTime);
-                                if (formatted.value) {
-                                  setScheduleTime(formatted.value);
-                                  setScheduleError("");
-                                } else if (scheduleTime.trim()) {
-                                  setScheduleError(formatted.error);
-                                }
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") {
-                                  event.currentTarget.blur();
-                                }
-                              }}
-                              className="h-12 rounded-xl pr-10 text-sm font-medium shadow-sm transition hover:border-primary/40 focus-visible:ring-2"
-                            />
-                            <Clock className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                          </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Button type="button" variant="outline" onClick={() => void createReviewPosts("draft")} disabled={isPublishing || previewArticles.length === 0}>
+                            {isPublishing ? "Saving..." : "Save Draft"}
+                          </Button>
+                          <Button type="button" onClick={() => void createReviewPosts("submitted")} disabled={isPublishing || previewArticles.length === 0}>
+                            {isPublishing ? "Submitting..." : "Submit for Review"}
+                          </Button>
                         </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                        Social posts can be published only after they are approved. Review submitted requests below, then publish from the approved post actions.
                       </div>
                     )}
 
@@ -1578,16 +2015,13 @@ function InstagramPublishing() {
                   </CardContent>
                 </Card>
 
-                <div className="flex justify-end pt-1">
-                  <Button className="w-full sm:w-auto" onClick={publishWithSettings} disabled={isPublishing}>
-                    {isPublishing ? (publishMode === "later" ? "Scheduling..." : "Publishing...") : "Publish"}
-                  </Button>
-                </div>
-
                 {(isLoadingScheduledPosts || scheduledPostGroups.length > 0) && (
                   <Card className="shadow-sm">
                     <CardHeader>
-                      <CardTitle className="text-base">Scheduled Posts</CardTitle>
+                      <CardTitle className="text-base">Social-Only Posts</CardTitle>
+                      <CardDescription>
+                        Recent posts created for the active organization and selected social platforms.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {isLoadingScheduledPosts && (
@@ -1602,8 +2036,8 @@ function InstagramPublishing() {
                               <div className="text-sm font-medium">{formatScheduledAt(group.scheduledAt)}</div>
                               <div className="mt-1 text-sm font-semibold">{scheduledPostTitle(group, articles)}</div>
                             </div>
-                            <Badge variant={group.status === "scheduled" ? "default" : "secondary"}>
-                              {group.status === "scheduled" ? "Scheduled" : "Cancelled"}
+                            <Badge variant={["approved", "scheduled", "published"].includes(group.status) ? "default" : "secondary"}>
+                              {socialPostStatusLabel(group.status)}
                             </Badge>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
@@ -1612,6 +2046,41 @@ function InstagramPublishing() {
                             ))}
                           </div>
                           <div className="flex flex-wrap gap-2">
+                            {canReviewSocial && ["submitted", "under_review"].includes(group.status) && (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void updateSocialPostsStatus(postIds, "approved").catch((error) => setScheduleError(error instanceof Error ? error.message : "Unable to approve social post."))}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void updateSocialPostsStatus(postIds, "rejected").catch((error) => setScheduleError(error instanceof Error ? error.message : "Unable to reject social post."))}
+                                >
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                            {canPublishSocial && group.status === "approved" && (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void updateSocialPostsStatus(postIds, "published").catch((error) => setScheduleError(error instanceof Error ? error.message : "Unable to publish social post."))}
+                                >
+                                  Publish Now
+                                </Button>
+                                <Button type="button" variant="outline" size="sm" onClick={() => openScheduleDialog(group.posts)}>
+                                  Schedule
+                                </Button>
+                              </>
+                            )}
                             <Button
                               type="button"
                               variant="outline"
@@ -1659,7 +2128,7 @@ function InstagramPublishing() {
                       <div key={result.platform} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
                         <span>{platformLabel(result.platform)}</span>
                         <span className={result.status === "published" ? "text-emerald-600" : "text-destructive"}>
-                          {result.status === "published" ? "✓ Published" : "✗ Failed"}
+                          {result.status === "published" ? "Published" : "Failed"}
                         </span>
                       </div>
                     ))}
@@ -1930,6 +2399,25 @@ function PlatformPostPreview({ platform, ...props }: PlatformPreviewProps & { pl
   }
 }
 
+function captionLines(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#") && !line.startsWith("@"));
+}
+
+function inshortsHeadlineFromCaption(caption: string, fallback: string) {
+  const firstLine = captionLines(caption)[0];
+  return (firstLine || fallback).replace(/\.$/, "").slice(0, 90);
+}
+
+function inshortsSummaryFromCaption(caption: string, fallback: string) {
+  const lines = captionLines(caption);
+  const summaryText = lines.slice(1).join(" ") || lines[0] || fallback;
+  const words = summaryText.split(/\s+/).filter(Boolean).slice(0, 60);
+  return words.join(" ");
+}
+
 function getPreviewContent({ articles, caption, mentions, hashtags, carouselIndex, branding }: PlatformPreviewProps) {
   const slides = articles.slice(0, 6);
   const activeIndex = slides.length === 0 ? 0 : Math.min(carouselIndex, slides.length - 1);
@@ -1944,8 +2432,8 @@ function getPreviewContent({ articles, caption, mentions, hashtags, carouselInde
     activeIndex,
     activeArticle,
     displayText,
-    headline: activeArticle ? articleTitle(activeArticle) : "Today's Top Stories",
-    summary: activeArticle ? articleDescription(activeArticle) : cleanCaption,
+    headline: inshortsHeadlineFromCaption(cleanCaption, activeArticle ? articleTitle(activeArticle) : "Today's Top Stories"),
+    summary: inshortsSummaryFromCaption(cleanCaption, activeArticle ? articleDescription(activeArticle) : cleanCaption),
   };
 }
 

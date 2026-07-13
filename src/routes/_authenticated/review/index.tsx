@@ -1,9 +1,10 @@
 import { createFileRoute, Link, useRouteContext, redirect } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Check, Clock3, Loader2, Rocket, XCircle } from "lucide-react";
+import { Check, Clock3, Loader2, Rocket, Share2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { aiFn, type Article, type Newspaper } from "@/lib/api";
@@ -54,6 +55,44 @@ type PipelineOutputs = {
   social_slides?: unknown;
 };
 
+type SocialPostStatus =
+  | "draft"
+  | "submitted"
+  | "under_review"
+  | "approved"
+  | "rejected"
+  | "scheduled"
+  | "published"
+  | "cancelled"
+  | "failed";
+
+type SocialPost = {
+  id: string;
+  organization_id: string;
+  newspaper_id: string | null;
+  article_ids: string[] | null;
+  platform: "instagram" | "twitter" | "facebook" | "whatsapp" | "inshorts";
+  status: SocialPostStatus;
+  caption: string | null;
+  summary: string | null;
+  content: {
+    customContent?: string | null;
+    customImageName?: string | null;
+    slides?: Array<{
+      articleId?: string;
+      caption?: string;
+      hashtags?: string[];
+    }>;
+  } | null;
+  scheduled_at: string | null;
+  published_at: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_comment: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 const pipelineStageDefinitions: Array<Omit<PipelineStage, "status">> = [
   { key: "website", label: "Website" },
   { key: "pdf", label: "PDF" },
@@ -76,6 +115,34 @@ function setStageStatus(
 
 function getLatestJobForNewspaper(jobs: PublicationJob[], newspaperId: string) {
   return jobs.find((job) => job.newspaper_id === newspaperId) ?? null;
+}
+
+function socialPlatformLabel(platform: SocialPost["platform"]) {
+  switch (platform) {
+    case "instagram":
+      return "Instagram";
+    case "twitter":
+      return "X (Twitter)";
+    case "facebook":
+      return "Facebook";
+    case "whatsapp":
+      return "WhatsApp Channel";
+    case "inshorts":
+      return "Inshorts";
+    default:
+      return platform;
+  }
+}
+
+function socialStatusLabel(status: SocialPostStatus) {
+  return status.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function socialPostTitle(post: SocialPost) {
+  const slideCaption = post.content?.slides?.find((slide) => slide.caption?.trim())?.caption?.trim();
+  const text = post.caption?.trim() || post.summary?.trim() || post.content?.customContent?.trim() || slideCaption;
+  if (!text) return "Untitled social post";
+  return text.split("\n").find((line) => line.trim())?.trim().slice(0, 90) || "Untitled social post";
 }
 
 function createPipelineOutputUrls(newspaper: Newspaper) {
@@ -260,6 +327,36 @@ function ReviewQueue() {
   const qc = useQueryClient();
   const canPublish = hasPermission(ctx.permissions, "publish_articles");
 
+  const { data: socialReviewQueue = [] } = useQuery({
+    queryKey: ["social-review-queue", organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: async () => {
+      const { data, error } = await supabaseUntyped
+        .from("social_posts")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .in("status", ["submitted", "under_review"])
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as SocialPost[];
+    },
+  });
+
+  const { data: approvedSocialPosts = [] } = useQuery({
+    queryKey: ["approved-social-posts", organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: async () => {
+      const { data, error } = await supabaseUntyped
+        .from("social_posts")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .eq("status", "approved")
+        .order("updated_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as SocialPost[];
+    },
+  });
+
   const { data: queue = [] } = useQuery({
     queryKey: ["review-queue", organizationId],
     enabled: Boolean(organizationId),
@@ -331,15 +428,157 @@ function ReviewQueue() {
       toast.error(error instanceof Error ? error.message : "Could not publish edition"),
   });
 
+  const updateSocialPost = useMutation({
+    mutationFn: async ({
+      post,
+      status,
+    }: {
+      post: SocialPost;
+      status: "under_review" | "approved" | "rejected" | "published";
+    }) => {
+      const patch: Record<string, unknown> = {
+        status,
+      };
+      if (status === "under_review" || status === "approved" || status === "rejected") {
+        patch.reviewed_by = user.id;
+        patch.reviewed_at = new Date().toISOString();
+      }
+      if (status === "published") {
+        patch.published_at = new Date().toISOString();
+      }
+
+      const { error } = await supabaseUntyped
+        .from("social_posts")
+        .update(patch)
+        .eq("id", post.id)
+        .eq("organization_id", organizationId);
+      if (error) throw error;
+    },
+    onSuccess: (_, variables) => {
+      qc.invalidateQueries({ queryKey: ["social-review-queue", organizationId] });
+      qc.invalidateQueries({ queryKey: ["approved-social-posts", organizationId] });
+      toast.success(`Social post ${socialStatusLabel(variables.status).toLowerCase()}`);
+    },
+    onError: (error: unknown) =>
+      toast.error(error instanceof Error ? error.message : "Could not update social post"),
+  });
+
   return (
     <div className="space-y-8">
       <div>
         <h1 className="font-serif text-3xl font-bold">Review Queue</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Review submitted editions, then publish approved editions through the full publication
-          pipeline.
+          Review submitted editions and social posts, then publish approved work when the
+          organization is ready.
         </p>
       </div>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">Social Approval Requests</h2>
+          <p className="text-sm text-muted-foreground">
+            Social posts submitted by editors and waiting for chief editor approval.
+          </p>
+        </div>
+        {socialReviewQueue.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+            No social approval requests right now.
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {socialReviewQueue.map((post) => (
+              <div key={post.id} className="space-y-3 rounded-lg border bg-card p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Share2 className="h-4 w-4 text-primary" />
+                      <div className="font-serif text-lg font-semibold">{socialPostTitle(post)}</div>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                      <span>{socialPlatformLabel(post.platform)}</span>
+                      <span>{format(new Date(post.created_at), "dd MMM yyyy, h:mm a")}</span>
+                      <Badge variant="secondary">{socialStatusLabel(post.status)}</Badge>
+                    </div>
+                    {post.summary && (
+                      <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{post.summary}</p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {post.status === "submitted" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => updateSocialPost.mutate({ post, status: "under_review" })}
+                        disabled={updateSocialPost.isPending}
+                      >
+                        Start Review
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      onClick={() => updateSocialPost.mutate({ post, status: "approved" })}
+                      disabled={updateSocialPost.isPending}
+                    >
+                      <Check className="mr-2 h-4 w-4" />
+                      Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => updateSocialPost.mutate({ post, status: "rejected" })}
+                      disabled={updateSocialPost.isPending}
+                    >
+                      <XCircle className="mr-2 h-4 w-4" />
+                      Reject
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">Approved Social Posts</h2>
+          <p className="text-sm text-muted-foreground">
+            Approved social posts waiting for the organization to publish.
+          </p>
+        </div>
+        {approvedSocialPosts.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+            No approved social posts waiting to publish.
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {approvedSocialPosts.map((post) => (
+              <div key={post.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Share2 className="h-4 w-4 text-primary" />
+                    <div className="font-serif text-lg font-semibold">{socialPostTitle(post)}</div>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    <span>{socialPlatformLabel(post.platform)}</span>
+                    <Badge>{socialStatusLabel(post.status)}</Badge>
+                  </div>
+                </div>
+                {canPublish && (
+                  <Button
+                    size="sm"
+                    onClick={() => updateSocialPost.mutate({ post, status: "published" })}
+                    disabled={updateSocialPost.isPending}
+                  >
+                    <Rocket className="mr-2 h-4 w-4" />
+                    Publish Social Post
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="space-y-3">
         <div>
