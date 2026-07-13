@@ -21,7 +21,7 @@ export function OrganizationSetupForm({
   title = "Create your organization",
   description = "Set up the secure workspace for your newsroom, publication, or media team.",
   submitLabel = "Create organization",
-  successMessage = "Organization created. You are now the Owner.",
+  successMessage = "Organization created. You are now the Owner/Admin.",
 }: OrganizationSetupFormProps) {
   const { user } = useRouteContext({ from: "/_authenticated" });
   const navigate = useNavigate();

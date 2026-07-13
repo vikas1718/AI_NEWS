@@ -48,11 +48,13 @@ function EditionsList() {
   const canCreateArticles = hasPermission(ctx.permissions, "create_articles");
 
   const { data: newspapers, isLoading } = useQuery({
-    queryKey: ["newspapers"],
+    queryKey: ["newspapers", organization?.id],
+    enabled: Boolean(organization?.id),
     queryFn: async () => {
       const { data, error } = await supabase
         .from("newspapers")
         .select("*")
+        .eq("organization_id", organization!.id)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
@@ -77,13 +79,12 @@ function EditionsList() {
       return data;
     },
     onSuccess: (n) => {
-      qc.invalidateQueries({ queryKey: ["newspapers"] });
+      qc.invalidateQueries({ queryKey: ["newspapers", organization?.id] });
       toast.success("Edition created");
       setOpen(false);
       window.location.href = `/editions/${n.id}`;
     },
-    onError: (error: unknown) =>
-      toast.error(error instanceof Error ? error.message : "Could not create edition"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Could not create edition")),
   });
 
   return (
@@ -215,4 +216,13 @@ function EditionsList() {
       )}
     </div>
   );
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object") {
+    const detail = "message" in error ? error.message : "details" in error ? error.details : null;
+    if (typeof detail === "string" && detail.trim()) return detail;
+  }
+  return fallback;
 }

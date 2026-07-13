@@ -64,6 +64,16 @@ const GRID_ROWS = 18;
 const FRONT_PAGE_HEADER_AD_SLOT_ID = "front_page_header_left_ad";
 const FRONT_PAGE_HEADER_QUOTE_SLOT_ID = "front_page_header_quote";
 const DEFAULT_HEADER_QUOTE = "ದಿನದ ಚಿಂತನೆ / Quote";
+const DEFAULT_HEADER_AD_ASSIGNMENT: SavedAssignment = {
+  ad: {
+    title: "Advertisement",
+    size: "3 columns x 1 rows",
+    imageUrl: "",
+    subtitle: "",
+    contact: "",
+    note: "",
+  },
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -199,7 +209,9 @@ function HeaderQuoteBox({ quote }: { quote?: string }) {
 }
 
 function headerAdAssignment(pageState: SavedPageState) {
-  return pageState.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID];
+  return pageState.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID]?.ad
+    ? pageState.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID]
+    : DEFAULT_HEADER_AD_ASSIGNMENT;
 }
 
 export function SavedLayoutPreviewPage({ articles, layoutJson, pageNumber }: Props) {
@@ -209,7 +221,6 @@ export function SavedLayoutPreviewPage({ articles, layoutJson, pageNumber }: Pro
 
   if (!pageState) return null;
   const headerAd = headerAdAssignment(pageState);
-  const hasHeaderAd = hasAssignedAd(headerAd);
 
   const pageStyle: CSSProperties = {
     width: PAGE_WIDTH,
@@ -240,15 +251,13 @@ export function SavedLayoutPreviewPage({ articles, layoutJson, pageNumber }: Pro
               </div>
               <div
                 className="flex flex-col items-center justify-center text-center"
-                style={{ gridColumn: hasHeaderAd ? "4 / span 6" : "4 / span 9" }}
+                style={{ gridColumn: "4 / span 6" }}
               >
                 <PrajavaniMasthead />
               </div>
-              {hasHeaderAd && (
-                <div style={{ gridColumn: "10 / span 3", gridRow: "1 / span 1" }}>
-                  <AdBlock assignment={headerAd} />
-                </div>
-              )}
+              <div style={{ gridColumn: "10 / span 3", gridRow: "1 / span 1" }}>
+                <AdBlock assignment={headerAd} />
+              </div>
             </div>
           ) : (
             <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.22em]">

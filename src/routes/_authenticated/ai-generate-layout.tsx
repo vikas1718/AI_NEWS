@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouteContext } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
@@ -663,7 +663,7 @@ function AiGeneratedPagePreview({
       >
         <header className="mb-3 border-b-4 border-double border-newsprint-ink pb-2">
           <div className="flex items-center justify-between gap-4 text-[10px] font-bold uppercase tracking-[0.35em]">
-            <span>{newspaper.edition_name || "Prajavani"}</span>
+            <span>{newspaper.edition_name || "News Edition"}</span>
             <span>AI Generated Page</span>
           </div>
           <div className="mt-1 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-newsprint-ink/65">
@@ -717,16 +717,20 @@ function AiGeneratedPagePreview({
 }
 
 function AiGenerateLayoutPage() {
+  const ctx = useRouteContext({ from: "/_authenticated" });
+  const organizationId = ctx.organization?.id;
   const [selectedEditionId, setSelectedEditionId] = useState("");
   const [generatedEditionId, setGeneratedEditionId] = useState("");
   const [layoutVariant, setLayoutVariant] = useState(0);
 
   const { data: newspapers = [], isLoading: newspapersLoading } = useQuery({
-    queryKey: ["ai-layout-newspapers"],
+    queryKey: ["ai-layout-newspapers", organizationId],
+    enabled: Boolean(organizationId),
     queryFn: async () => {
       const { data, error } = await supabase
         .from("newspapers")
         .select("*")
+        .eq("organization_id", organizationId!)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as Newspaper[];
@@ -738,8 +742,8 @@ function AiGenerateLayoutPage() {
     newspapers.find((newspaper) => newspaper.id === activeEditionId) ?? newspapers[0];
 
   const { data: articles = [], isLoading: articlesLoading } = useQuery({
-    queryKey: ["ai-layout-articles", activeEditionId],
-    enabled: Boolean(activeEditionId),
+    queryKey: ["ai-layout-articles", activeEditionId, organizationId],
+    enabled: Boolean(activeEditionId && selectedNewspaper?.organization_id === organizationId),
     queryFn: async () => {
       const { data, error } = await supabase
         .from("articles")

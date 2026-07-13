@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouteContext } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { BarChart3, Bookmark, Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Clock, Eye, Globe2, Heart, Image, Instagram, Loader2, MessageCircle, MoreHorizontal, Repeat2, Search, Send, Share2, ThumbsUp } from "lucide-react";
@@ -40,9 +40,38 @@ type SlideContent = {
 const platformTemplate = {
   platform: "Instagram",
   defaultCaptionPrefix: "Today's Top Stories",
-  defaultHashtags: ["#Prajavani", "#IndiaNews", "#TopNews", "#Weather", "#Politics", "#Business"],
+  defaultHashtags: ["#Newsroom", "#IndiaNews", "#TopNews", "#Weather", "#Politics", "#Business"],
   bestPostingTime: "6:30 PM",
 };
+
+type SocialBranding = {
+  displayName: string;
+  handle: string;
+  hashtag: string;
+};
+
+const defaultSocialBranding: SocialBranding = {
+  displayName: "Newsroom",
+  handle: "newsroom",
+  hashtag: "#Newsroom",
+};
+
+function createSocialBranding(name?: string | null): SocialBranding {
+  const displayName = name?.trim() || defaultSocialBranding.displayName;
+  const handle =
+    displayName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 28) || defaultSocialBranding.handle;
+  const hashtag = toHashtag(displayName) || defaultSocialBranding.hashtag;
+
+  return { displayName, handle, hashtag };
+}
+
+function defaultHashtagsForBrand(branding: SocialBranding) {
+  return uniqueHashtags([branding.hashtag, ...platformTemplate.defaultHashtags]);
+}
 
 function InstagramBrandLogo({ className }: { className?: string }) {
   return (
@@ -329,9 +358,9 @@ function createSummary(articles: Article[]) {
   return `India witnessed several important developments today.\n\n${bullets}\n\nThe selected stories have been combined into one concise summary suitable for Instagram.`;
 }
 
-function createCaption(articles: Article[]) {
+function createCaption(articles: Article[], branding = defaultSocialBranding) {
   if (articles.length === 0) {
-    return `${platformTemplate.defaultCaptionPrefix}\n\nStay informed with Prajavani.\n\n#Prajavani\n#IndiaNews\n#BreakingNews`;
+    return `${platformTemplate.defaultCaptionPrefix}\n\nStay informed with ${branding.displayName}.\n\n${branding.hashtag}\n#IndiaNews\n#BreakingNews`;
   }
 
   const lines = articles
@@ -339,11 +368,11 @@ function createCaption(articles: Article[]) {
     .map((article) => articleTitle(article).replace(/\.$/, "") + "...")
     .join("\n\n");
 
-  return `${platformTemplate.defaultCaptionPrefix}\n\n${lines}\n\nStay informed with Prajavani.\n\n#Prajavani\n#IndiaNews\n#BreakingNews`;
+  return `${platformTemplate.defaultCaptionPrefix}\n\n${lines}\n\nStay informed with ${branding.displayName}.\n\n${branding.hashtag}\n#IndiaNews\n#BreakingNews`;
 }
 
-function createSlideCaption(article: Article) {
-  return createCaption([article])
+function createSlideCaption(article: Article, branding = defaultSocialBranding) {
+  return createCaption([article], branding)
     .split("\n")
     .filter((line) => !line.trim().startsWith("#"))
     .join("\n")
@@ -370,7 +399,7 @@ function uniqueHashtags(tags: string[]) {
 function articleKeywords(article: Article) {
   const stopWords = new Set([
     "about", "after", "also", "from", "have", "into", "more", "news", "that", "their", "this", "with",
-    "will", "today", "india", "indian", "prajavani", "story", "latest", "update",
+    "will", "today", "india", "indian", "story", "latest", "update",
   ]);
 
   return Array.from(
@@ -385,7 +414,7 @@ function articleKeywords(article: Article) {
     .map((word) => `#${word.charAt(0).toUpperCase()}${word.slice(1)}`);
 }
 
-function createHashtags(article: Article, variant = 0) {
+function createHashtags(article: Article, variant = 0, brandHashtag = defaultSocialBranding.hashtag) {
   const categoryTags = article.category ? [toHashtag(article.category)] : [];
   const categoryPools: Partial<Record<NonNullable<Article["category"]>, string[]>> = {
     Politics: ["#PoliticsToday", "#Governance", "#PublicPolicy", "#ElectionWatch"],
@@ -412,19 +441,19 @@ function createHashtags(article: Article, variant = 0) {
     ...articleKeywords(article),
     ...categoryPool,
     ...rotatedPool,
-    "#Prajavani",
+    brandHashtag,
   ]).slice(0, 12);
 }
 
-function createSlideContent(article: Article): SlideContent {
+function createSlideContent(article: Article, branding = defaultSocialBranding): SlideContent {
   const suggestedMentions = createMentionSuggestions(article);
   return {
-    caption: createSlideCaption(article),
+    caption: createSlideCaption(article, branding),
     mentions: suggestedMentions,
     suggestedMentions,
     mentionsEdited: false,
     mentionSignature: articleMentionSignature(article),
-    hashtags: createHashtags(article),
+    hashtags: createHashtags(article, 0, branding.hashtag),
     hashtagVariant: 0,
   };
 }
@@ -614,56 +643,67 @@ function createMentionSuggestions(article: Article) {
   ).slice(0, 8);
 }
 
-function refreshSlideContent(article: Article, existing?: SlideContent): SlideContent {
+function refreshSlideContent(article: Article, existing?: SlideContent, branding = defaultSocialBranding): SlideContent {
   const mentionSignature = articleMentionSignature(article);
   const suggestedMentions = existing?.suggestedMentions ?? createMentionSuggestions(article);
   const shouldRefreshMentions = !existing || existing.mentionSignature !== mentionSignature;
 
   return {
-    caption: existing?.caption ?? createSlideCaption(article),
+    caption: existing?.caption ?? createSlideCaption(article, branding),
     mentions: shouldRefreshMentions ? suggestedMentions : existing.mentions ?? [],
     suggestedMentions,
     mentionsEdited: existing?.mentionsEdited ?? false,
     mentionSignature,
-    hashtags: existing?.hashtags ?? createHashtags(article),
+    hashtags: existing?.hashtags ?? createHashtags(article, 0, branding.hashtag),
     hashtagVariant: existing?.hashtagVariant ?? 0,
   };
 }
 
-function generateSlideContent(article: Article, existing?: SlideContent): SlideContent {
+function generateSlideContent(article: Article, existing?: SlideContent, branding = defaultSocialBranding): SlideContent {
   const mentionSignature = articleMentionSignature(article);
   const suggestedMentions = createMentionSuggestions(article);
   const preserveManualMentions = Boolean(existing?.mentionsEdited && existing.mentionSignature === mentionSignature);
 
   return {
-    caption: createSlideCaption(article),
+    caption: createSlideCaption(article, branding),
     mentions: preserveManualMentions ? existing?.mentions ?? [] : suggestedMentions,
     suggestedMentions,
     mentionsEdited: preserveManualMentions,
     mentionSignature,
-    hashtags: createHashtags(article),
+    hashtags: createHashtags(article, 0, branding.hashtag),
     hashtagVariant: 0,
   };
 }
 
-function slideContentFromAi(article: Article, generated: InstagramSlideContent | undefined, existing?: SlideContent): SlideContent {
+function slideContentFromAi(
+  article: Article,
+  generated: InstagramSlideContent | undefined,
+  existing?: SlideContent,
+  branding = defaultSocialBranding,
+): SlideContent {
   const mentionSignature = articleMentionSignature(article);
   const aiMentions = uniqueMentions([...(generated?.mentions ?? []), ...createMentionSuggestions(article)]);
   const preserveManualMentions = Boolean(existing?.mentionsEdited && existing.mentionSignature === mentionSignature);
   const hashtags = uniqueHashtags(generated?.hashtags ?? []);
 
   return {
-    caption: generated?.caption?.trim() || createSlideCaption(article),
+    caption: generated?.caption?.trim() || createSlideCaption(article, branding),
     mentions: preserveManualMentions ? existing?.mentions ?? [] : aiMentions,
     suggestedMentions: aiMentions,
     mentionsEdited: preserveManualMentions,
     mentionSignature,
-    hashtags: hashtags.length > 0 ? hashtags : createHashtags(article),
+    hashtags: hashtags.length > 0 ? hashtags : createHashtags(article, 0, branding.hashtag),
     hashtagVariant: 0,
   };
 }
 
 function InstagramPublishing() {
+  const ctx = useRouteContext({ from: "/_authenticated" });
+  const organizationId = ctx.organization?.id;
+  const socialBranding = useMemo(
+    () => createSocialBranding(ctx.organization?.name),
+    [ctx.organization?.name],
+  );
   const [activePlatform, setActivePlatform] = useState<PlatformId>("instagram");
   const [selectedPlatforms, setSelectedPlatforms] = useState<PlatformId[]>(["instagram"]);
   const [publishMode, setPublishMode] = useState<"now" | "later">("now");
@@ -701,11 +741,13 @@ function InstagramPublishing() {
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
 
   const { data: currentEdition } = useQuery({
-    queryKey: ["instagram-current-edition"],
+    queryKey: ["instagram-current-edition", organizationId],
+    enabled: Boolean(organizationId),
     queryFn: async () => {
       const { data, error } = await supabase
         .from("newspapers")
         .select("*")
+        .eq("organization_id", organizationId!)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -715,8 +757,8 @@ function InstagramPublishing() {
   });
 
   const { data: articlesData, isLoading } = useQuery({
-    queryKey: ["instagram-edition-articles", currentEdition?.id],
-    enabled: Boolean(currentEdition?.id),
+    queryKey: ["instagram-edition-articles", currentEdition?.id, organizationId],
+    enabled: Boolean(currentEdition?.id && currentEdition?.organization_id === organizationId),
     queryFn: async () => {
       const { data, error } = await supabase
         .from("articles")
@@ -749,14 +791,14 @@ function InstagramPublishing() {
   const activeIndex = previewSlides.length === 0 ? 0 : Math.min(carouselIndex, previewSlides.length - 1);
   const activeArticle = previewSlides[activeIndex];
   const activeSlideContent = activeArticle
-    ? refreshSlideContent(activeArticle, slideContent[activeArticle.id])
+    ? refreshSlideContent(activeArticle, slideContent[activeArticle.id], socialBranding)
     : {
-        caption: caption.trim() || createCaption([]),
+        caption: caption.trim() || createCaption([], socialBranding),
         mentions: [],
         suggestedMentions: [],
         mentionsEdited: false,
         mentionSignature: "",
-        hashtags: platformTemplate.defaultHashtags,
+        hashtags: defaultHashtagsForBrand(socialBranding),
         hashtagVariant: 0,
       };
 
@@ -786,18 +828,18 @@ function InstagramPublishing() {
   }, [aiSelectedIds, selectionMode]);
 
   useEffect(() => {
-    setCaption(createCaption(previewArticles));
-  }, [previewArticles]);
+    setCaption(createCaption(previewArticles, socialBranding));
+  }, [previewArticles, socialBranding]);
 
   useEffect(() => {
     setSlideContent((current) => {
       const next = { ...current };
       previewSlides.forEach((article) => {
-        next[article.id] = refreshSlideContent(article, next[article.id]);
+        next[article.id] = refreshSlideContent(article, next[article.id], socialBranding);
       });
       return next;
     });
-  }, [previewSlides]);
+  }, [previewSlides, socialBranding]);
 
   useEffect(() => {
     setCarouselIndex(0);
@@ -845,7 +887,7 @@ function InstagramPublishing() {
     if (previewSlides.length === 0) return;
     setIsGeneratingInstagramPost(true);
     setSummary(createSummary(previewArticles));
-    setCaption(createCaption(previewArticles));
+    setCaption(createCaption(previewArticles, socialBranding));
     try {
       const generated = await aiFn.instagram(previewSlides);
       console.log("Instagram AI Response:", generated);
@@ -855,7 +897,7 @@ function InstagramPublishing() {
         const next = { ...current };
         const slidesByArticleId = new Map((generated.slides ?? []).map((slide) => [slide.article_id, slide]));
         previewSlides.forEach((article) => {
-          next[article.id] = slideContentFromAi(article, slidesByArticleId.get(article.id), next[article.id]);
+          next[article.id] = slideContentFromAi(article, slidesByArticleId.get(article.id), next[article.id], socialBranding);
         });
         console.log("Stored Slide:", activeArticle ? next[activeArticle.id] : undefined);
         return next;
@@ -865,7 +907,7 @@ function InstagramPublishing() {
       setSlideContent((current) => {
         const next = { ...current };
         previewSlides.forEach((article) => {
-          next[article.id] = generateSlideContent(article, next[article.id]);
+          next[article.id] = generateSlideContent(article, next[article.id], socialBranding);
         });
         return next;
       });
@@ -882,13 +924,13 @@ function InstagramPublishing() {
   function regenerateHashtags() {
     if (!activeArticle) return;
     setSlideContent((current) => {
-      const existing = current[activeArticle.id] ?? createSlideContent(activeArticle);
+      const existing = current[activeArticle.id] ?? createSlideContent(activeArticle, socialBranding);
       const hashtagVariant = existing.hashtagVariant + 1;
       return {
         ...current,
         [activeArticle.id]: {
           ...existing,
-          hashtags: createHashtags(activeArticle, hashtagVariant),
+          hashtags: createHashtags(activeArticle, hashtagVariant, socialBranding.hashtag),
           hashtagVariant,
         },
       };
@@ -902,7 +944,7 @@ function InstagramPublishing() {
     if (!activeArticle || !instructions || isApplyingChanges) return;
 
     const targetArticle = activeArticle;
-    const existing = refreshSlideContent(targetArticle, slideContent[targetArticle.id]);
+    const existing = refreshSlideContent(targetArticle, slideContent[targetArticle.id], socialBranding);
     console.log("Current Caption:", existing.caption);
     setModificationError("");
     setIsApplyingChanges(true);
@@ -918,7 +960,7 @@ function InstagramPublishing() {
       });
 
       setSlideContent((current) => {
-        const currentContent = refreshSlideContent(targetArticle, current[targetArticle.id]);
+        const currentContent = refreshSlideContent(targetArticle, current[targetArticle.id], socialBranding);
         const mentions = uniqueMentions(updated.mentions ?? []);
         const hashtags = uniqueHashtags(updated.hashtags ?? []);
         return {
@@ -959,7 +1001,7 @@ function InstagramPublishing() {
     const article = previewSlides.find((item) => item.id === editingArticleId);
     if (!article) return;
     setSlideContent((current) => {
-      const existing = current[editingArticleId] ?? createSlideContent(article);
+      const existing = current[editingArticleId] ?? createSlideContent(article, socialBranding);
       return {
         ...current,
         [editingArticleId]: {
@@ -995,7 +1037,7 @@ function InstagramPublishing() {
 
   function buildScheduledSlides() {
     return previewSlides.map((article, index) => {
-      const content = refreshSlideContent(article, slideContent[article.id]);
+      const content = refreshSlideContent(article, slideContent[article.id], socialBranding);
       return {
         articleId: article.id,
         order: index,
@@ -1374,6 +1416,7 @@ function InstagramPublishing() {
                     mentions={activeSlideContent.mentions}
                     hashtags={activeSlideContent.hashtags}
                     carouselIndex={carouselIndex}
+                    branding={socialBranding}
                     onPrevious={() =>
                       setCarouselIndex((current) =>
                         current === 0 ? Math.max(previewArticles.slice(0, 6).length - 1, 0) : current - 1,
@@ -1866,6 +1909,7 @@ type PlatformPreviewProps = {
   mentions: string[];
   hashtags: string[];
   carouselIndex: number;
+  branding: SocialBranding;
   onPrevious: () => void;
   onNext: () => void;
 };
@@ -1886,11 +1930,11 @@ function PlatformPostPreview({ platform, ...props }: PlatformPreviewProps & { pl
   }
 }
 
-function getPreviewContent({ articles, caption, mentions, hashtags, carouselIndex }: PlatformPreviewProps) {
+function getPreviewContent({ articles, caption, mentions, hashtags, carouselIndex, branding }: PlatformPreviewProps) {
   const slides = articles.slice(0, 6);
   const activeIndex = slides.length === 0 ? 0 : Math.min(carouselIndex, slides.length - 1);
   const activeArticle = slides[activeIndex];
-  const cleanCaption = caption.trim() || createCaption([]);
+  const cleanCaption = caption.trim() || createCaption([], branding);
   const cleanMentions = uniqueMentions(mentions).join(" ");
   const captionTags = hashtags.filter((tag) => !cleanCaption.includes(tag)).join(" ");
   const displayText = [cleanMentions, cleanCaption, captionTags].filter(Boolean).join("\n\n");
@@ -1971,6 +2015,7 @@ function CarouselImageControls({
 
 function TwitterPostPreview(props: PlatformPreviewProps) {
   const { slides, activeIndex, activeArticle, displayText } = getPreviewContent(props);
+  const { displayName, handle } = props.branding;
 
   return (
     <div className="rounded-xl border bg-background p-4">
@@ -1983,10 +2028,10 @@ function TwitterPostPreview(props: PlatformPreviewProps) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-1 font-bold leading-none">
-                  <span>Prajavani News</span>
+                  <span>{displayName}</span>
                   <VerifiedBadge className="bg-sky-500 text-white" />
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">@prajavani_news · 2h</div>
+                <div className="mt-1 text-xs text-muted-foreground">@{handle} · 2h</div>
               </div>
               <MoreHorizontal className="h-5 w-5 text-muted-foreground" />
             </div>
@@ -2019,6 +2064,7 @@ function TwitterPostPreview(props: PlatformPreviewProps) {
 
 function FacebookPostPreview(props: PlatformPreviewProps) {
   const { slides, activeIndex, activeArticle, displayText } = getPreviewContent(props);
+  const { displayName } = props.branding;
 
   return (
     <div className="rounded-xl border bg-[#f0f2f5] p-4">
@@ -2029,7 +2075,7 @@ function FacebookPostPreview(props: PlatformPreviewProps) {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1 font-semibold leading-none">
-              <span>Prajavani News</span>
+              <span>{displayName}</span>
               <VerifiedBadge className="bg-[#1877F2] text-white" />
             </div>
             <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
@@ -2081,6 +2127,7 @@ function FacebookPostPreview(props: PlatformPreviewProps) {
 
 function WhatsAppChannelPostPreview(props: PlatformPreviewProps) {
   const { slides, activeIndex, activeArticle, displayText } = getPreviewContent(props);
+  const { displayName } = props.branding;
 
   return (
     <div className="rounded-xl border bg-[#eae6df] p-4">
@@ -2089,7 +2136,7 @@ function WhatsAppChannelPostPreview(props: PlatformPreviewProps) {
           <WhatsAppBrandLogo className="h-10 w-10" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1 font-semibold">
-              <span>Prajavani Channel</span>
+              <span>{displayName} Channel</span>
               <VerifiedBadge className="bg-emerald-500 text-white" />
             </div>
             <div className="text-xs text-slate-500">Today at 6:30 PM</div>
@@ -2130,6 +2177,7 @@ function WhatsAppChannelPostPreview(props: PlatformPreviewProps) {
 
 function InshortsPostPreview(props: PlatformPreviewProps) {
   const { slides, activeIndex, activeArticle, headline, summary } = getPreviewContent(props);
+  const { displayName } = props.branding;
 
   return (
     <div className="rounded-xl border bg-background p-4">
@@ -2145,13 +2193,13 @@ function InshortsPostPreview(props: PlatformPreviewProps) {
 
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/70 to-transparent p-5 text-white">
             <div className="mb-3 flex items-center justify-between text-xs">
-              <span className="rounded-full bg-white/18 px-2 py-1 backdrop-blur">Prajavani · 2 min read</span>
+              <span className="rounded-full bg-white/18 px-2 py-1 backdrop-blur">{displayName} · 2 min read</span>
               <Share2 className="h-5 w-5" />
             </div>
             <h3 className="text-xl font-bold leading-tight">{headline}</h3>
             <p className="mt-3 line-clamp-5 text-sm leading-6 text-white/90">{summary}</p>
             <div className="mt-4 flex items-center justify-between text-xs text-white/75">
-              <span>Source: Prajavani News</span>
+              <span>Source: {displayName}</span>
               <span>{activeIndex + 1}/{Math.max(slides.length, 1)}</span>
             </div>
           </div>
@@ -2190,21 +2238,14 @@ function InstagramPostPreview({
   mentions,
   hashtags,
   carouselIndex,
+  branding,
   onPrevious,
   onNext,
-}: {
-  articles: Article[];
-  caption: string;
-  mentions: string[];
-  hashtags: string[];
-  carouselIndex: number;
-  onPrevious: () => void;
-  onNext: () => void;
-}) {
+}: PlatformPreviewProps) {
   const slides = articles.slice(0, 6);
   const activeIndex = slides.length === 0 ? 0 : Math.min(carouselIndex, slides.length - 1);
   const activeArticle = slides[activeIndex];
-  const cleanCaption = caption.trim() || createCaption([]);
+  const cleanCaption = caption.trim() || createCaption([], branding);
   const cleanMentions = uniqueMentions(mentions).join(" ");
   const captionTags = hashtags.filter((tag) => !cleanCaption.includes(tag));
   const displayCaption = [cleanMentions, cleanCaption, captionTags.join(" ")].filter(Boolean).join("\n\n");
@@ -2218,12 +2259,12 @@ function InstagramPostPreview({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1 font-semibold leading-none">
-              <span>prajavani_news</span>
+              <span>{branding.handle}</span>
               <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
                 <Check className="h-2.5 w-2.5" />
               </span>
             </div>
-            <div className="mt-1 text-[11px] text-muted-foreground">Prajavani News - 2h</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">{branding.displayName} - 2h</div>
           </div>
           <MoreHorizontal className="h-5 w-5 text-muted-foreground" />
         </div>
@@ -2289,7 +2330,7 @@ function InstagramPostPreview({
 
           <div className="mt-3 font-semibold">Liked by 12,543 people</div>
           <div className="mt-2 whitespace-pre-wrap leading-5">
-            <span className="font-semibold">prajavani_news</span>{" "}
+            <span className="font-semibold">{branding.handle}</span>{" "}
             <span>{displayCaption}</span>
           </div>
           <div className="mt-2 text-muted-foreground">View all comments</div>

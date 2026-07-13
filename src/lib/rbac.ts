@@ -14,6 +14,8 @@ export type PermissionKey =
   | "approve_articles"
   | "publish_articles"
   | "manage_editorial_workflow"
+  | "submit_for_review"
+  | "delete_newspapers"
   | "access_ai_generation"
   | "access_layout_generation"
   | "access_assigned_pages"
@@ -61,6 +63,8 @@ const ownerPermissions: PermissionKey[] = [
   "approve_articles",
   "publish_articles",
   "manage_editorial_workflow",
+  "submit_for_review",
+  "delete_newspapers",
   "access_ai_generation",
   "access_layout_generation",
   "access_assigned_pages",
@@ -91,6 +95,7 @@ export const rolePermissions: Record<OrganizationRole, PermissionKey[]> = {
     "view_dashboard",
     "create_articles",
     "edit_articles",
+    "submit_for_review",
     "access_ai_generation",
     "access_layout_generation",
     "access_assigned_pages",
@@ -99,7 +104,7 @@ export const rolePermissions: Record<OrganizationRole, PermissionKey[]> = {
 };
 
 export const roleLabels: Record<OrganizationRole, string> = {
-  owner: "Owner",
+  owner: "Owner/Admin",
   chief_editor: "Chief Editor",
   editor: "Editor",
 };

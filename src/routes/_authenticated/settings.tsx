@@ -348,7 +348,7 @@ function SettingsPage() {
                           {isOwner && (
                             <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold uppercase text-amber-600">
                               <Crown className="h-3 w-3" />
-                              Owner
+                              Owner/Admin
                             </span>
                           )}
                         </span>
@@ -366,8 +366,8 @@ function SettingsPage() {
                   <div className="pt-2 text-xs text-muted-foreground">
                     Current role: {roleLabels[membership.role]}.{" "}
                     {membership.role === "owner"
-                      ? "You have full organization privileges here."
-                      : "Owner-only organization settings and team controls are restricted here."}
+                      ? "You have full owner/admin privileges here."
+                      : "Owner/Admin organization settings and team controls are restricted here."}
                   </div>
                 )}
               </div>

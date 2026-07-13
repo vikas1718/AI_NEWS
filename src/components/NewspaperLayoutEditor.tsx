@@ -34,7 +34,13 @@ import {
   Unlock,
   Wand2,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Article } from "@/lib/api";
@@ -137,6 +143,9 @@ type ImagePlacement = {
 
 const PAGE_WIDTH = 780;
 const PAGE_HEIGHT = 1084;
+const MIN_PAGE_ZOOM = 45;
+const MAX_PAGE_ZOOM = 160;
+const PAGE_ZOOM_STEP = 5;
 const GRID_COLUMNS = 12;
 const GRID_ROWS = 18;
 const MIN_IMAGE_WIDTH_PCT = 28;
@@ -365,7 +374,7 @@ function isDefaultAdPlaceholder(assignment?: SlotAssignment) {
   const ad = assignment?.ad;
   if (!ad) return false;
 
-  const title = ad.title.trim();
+  const title = ad.title?.trim() ?? "";
   return (
     (!title || title === "Advertisement") &&
     !ad.imageUrl?.trim() &&
@@ -382,6 +391,16 @@ function sanitizeAssignments(assignments: Record<string, SlotAssignment>) {
       isDefaultAdPlaceholder(assignment) ? {} : assignment,
     ]),
   ) as Record<string, SlotAssignment>;
+}
+
+function withFrontPageHeaderAdAssignment(assignments: Record<string, SlotAssignment>) {
+  const headerAd = assignments[FRONT_PAGE_HEADER_AD_SLOT_ID];
+  return {
+    ...assignments,
+    [FRONT_PAGE_HEADER_AD_SLOT_ID]: headerAd?.ad
+      ? headerAd
+      : emptyAdAssignment(FRONT_PAGE_HEADER_AD_SLOT),
+  };
 }
 
 function asArticleSlot(slot: LayoutSlot): LayoutSlot {
@@ -443,7 +462,7 @@ function createInitialState(template: LayoutTemplateDef, articles: Article[]): L
     slots: cloneSlots(template.slots).map((slot) =>
       assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot,
     ),
-    assignments,
+    assignments: withFrontPageHeaderAdAssignment(assignments),
     rowScale: 100,
     columnScale: 100,
     gutter: 8,
@@ -509,7 +528,7 @@ function createPageState(
     slots: cloneSlots(template.slots).map((slot) =>
       assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot,
     ),
-    assignments,
+    assignments: withFrontPageHeaderAdAssignment(assignments),
     rowScale: 100,
     columnScale: 100,
     gutter: 8,
@@ -534,17 +553,13 @@ function applyTemplateToPage(pageState: LayoutState, template: LayoutTemplateDef
     if (assignment) assignments[slot.id] = assignment;
     storyIndex += 1;
   });
-  if (existingAssignments[FRONT_PAGE_HEADER_AD_SLOT_ID]?.ad) {
-    assignments[FRONT_PAGE_HEADER_AD_SLOT_ID] = existingAssignments[FRONT_PAGE_HEADER_AD_SLOT_ID];
-  }
-
   return {
     ...pageState,
     templateId: template.id,
     slots: cloneSlots(template.slots).map((slot) =>
       assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot,
     ),
-    assignments,
+    assignments: withFrontPageHeaderAdAssignment(assignments),
     headerQuote: pageState.headerQuote ?? DEFAULT_HEADER_QUOTE,
   };
 }
@@ -631,7 +646,11 @@ function savedLayoutToPageStates(
       .filter(([, pageState]) => isLayoutState(pageState))
       .map(([pageNumber, pageState]) => {
         const state = alignRightSideAds(pageState as LayoutState);
-        const assignments = sanitizeAssignments(state.assignments);
+        const sanitizedAssignments = sanitizeAssignments(state.assignments);
+        const assignments =
+          Number(pageNumber) === 1
+            ? withFrontPageHeaderAdAssignment(sanitizedAssignments)
+            : sanitizedAssignments;
         return [
           Number(pageNumber),
           {
@@ -677,6 +696,12 @@ function reconcilePagedStates(
         ]),
       ),
     });
+    if (pageNumber === 1) {
+      nextPages[pageNumber] = {
+        ...nextPages[pageNumber],
+        assignments: withFrontPageHeaderAdAssignment(nextPages[pageNumber].assignments),
+      };
+    }
   });
 
   return nextPages;
@@ -1250,6 +1275,7 @@ export function NewspaperLayoutEditor({
   const state = pageStates[activePage] ?? createPageState(TEMPLATE_DEFS[0], articles, activePage);
   const [selectedSlotId, setSelectedSlotId] = useState(state.slots[0]?.id ?? "");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("print");
+  const [pageZoom, setPageZoom] = useState(100);
   const [articleSearch, setArticleSearch] = useState("");
   const [activeDragLabel, setActiveDragLabel] = useState("");
   const [past, setPast] = useState<LayoutState[]>([]);
@@ -1328,6 +1354,16 @@ export function NewspaperLayoutEditor({
       ];
     }),
   );
+
+  function changePageZoom(delta: number) {
+    setPageZoom((current) => clamp(current + delta, MIN_PAGE_ZOOM, MAX_PAGE_ZOOM));
+  }
+
+  function handlePageWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    changePageZoom(event.deltaY < 0 ? PAGE_ZOOM_STEP : -PAGE_ZOOM_STEP);
+  }
 
   function commit(updater: (current: LayoutState) => LayoutState) {
     setPageStates((currentPages) => {
@@ -1775,6 +1811,8 @@ export function NewspaperLayoutEditor({
         for (const slot of orderedSlots) {
           const articleId = pageState.assignments[slot.id]?.articleId;
           if (!articleId) continue;
+          const article = articleById.get(articleId);
+          if (article?.newspaper_id !== newspaperId) continue;
           const { error } = await supabase
             .from("articles")
             .update({
@@ -1785,7 +1823,8 @@ export function NewspaperLayoutEditor({
               column_count: Math.min(3, Math.max(1, Math.floor(slot.w / 4))),
               priority_score: priority,
             })
-            .eq("id", articleId);
+            .eq("id", articleId)
+            .eq("newspaper_id", newspaperId);
           if (error) throw error;
           priority -= 1;
         }
@@ -1806,7 +1845,8 @@ export function NewspaperLayoutEditor({
       const { error } = await supabase
         .from("articles")
         .update(payload)
-        .eq("id", selectedArticle.id);
+        .eq("id", selectedArticle.id)
+        .eq("newspaper_id", newspaperId);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -1817,9 +1857,11 @@ export function NewspaperLayoutEditor({
       toast.error(error instanceof Error ? error.message : "Could not update article"),
   });
 
-  const canvasScale = previewMode === "mobile" ? 0.56 : previewMode === "pdf" ? 0.9 : 0.76;
-  const headerAdAssignment = state.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID];
-  const hasHeaderAd = Boolean(headerAdAssignment?.ad);
+  const previewBaseScale = previewMode === "mobile" ? 0.56 : previewMode === "pdf" ? 0.9 : 0.76;
+  const canvasScale = previewBaseScale * (pageZoom / 100);
+  const headerAdAssignment =
+    state.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID] ??
+    emptyAdAssignment(FRONT_PAGE_HEADER_AD_SLOT);
 
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
@@ -1882,17 +1924,17 @@ export function NewspaperLayoutEditor({
           </ScrollArea>
         </aside>
 
-        <section className="min-w-0 rounded-lg border bg-muted/25">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-card p-3">
+        <section className="min-w-0 rounded-lg border border-slate-200 bg-slate-100 text-slate-950">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white p-3">
             <div>
               <div className="text-sm font-semibold">Page layout</div>
-              <div className="text-xs leading-relaxed text-muted-foreground">
+              <div className="text-xs leading-relaxed text-slate-600">
                 Page {activePage}: {pagePlacedCount} of {pageCapacity} story spaces filled. Add a
                 new page when you need more room.
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-1">
-              <div className="mr-1 flex rounded-md border bg-background p-0.5">
+              <div className="mr-1 flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
                 {pageNumbers.map((pageNumber) => (
                   <button
                     key={pageNumber}
@@ -1901,7 +1943,7 @@ export function NewspaperLayoutEditor({
                     className={`h-8 min-w-12 rounded px-2 text-xs font-semibold transition ${
                       activePage === pageNumber
                         ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        : "text-slate-600 hover:bg-slate-200 hover:text-slate-950"
                     }`}
                   >
                     Page {pageNumber}
@@ -1911,6 +1953,7 @@ export function NewspaperLayoutEditor({
               <Button
                 size="sm"
                 variant="outline"
+                className="border-slate-300 bg-white text-slate-900 hover:bg-slate-100"
                 onClick={addPage}
                 disabled={!canEdit}
                 title="Add new page"
@@ -1921,6 +1964,7 @@ export function NewspaperLayoutEditor({
               <Button
                 size="sm"
                 variant="outline"
+                className="border-slate-300 bg-white text-slate-900 hover:bg-slate-100 disabled:text-slate-400"
                 onClick={deletePage}
                 disabled={!canEdit || pageNumbers.length <= 1}
                 title="Delete current page"
@@ -1933,19 +1977,62 @@ export function NewspaperLayoutEditor({
                 value={previewMode}
                 onValueChange={(value) => value && setPreviewMode(value as PreviewMode)}
               >
-                <ToggleGroupItem value="print" aria-label="Print preview">
+                <ToggleGroupItem
+                  value="print"
+                  aria-label="Print preview"
+                  className="border-slate-300 bg-white text-slate-800 hover:bg-slate-100 data-[state=on]:bg-slate-800 data-[state=on]:text-white"
+                >
                   <Monitor className="h-4 w-4" />
                 </ToggleGroupItem>
-                <ToggleGroupItem value="pdf" aria-label="PDF preview">
+                <ToggleGroupItem
+                  value="pdf"
+                  aria-label="PDF preview"
+                  className="border-slate-300 bg-white text-slate-800 hover:bg-slate-100 data-[state=on]:bg-slate-800 data-[state=on]:text-white"
+                >
                   <FileDown className="h-4 w-4" />
                 </ToggleGroupItem>
-                <ToggleGroupItem value="mobile" aria-label="Mobile preview">
+                <ToggleGroupItem
+                  value="mobile"
+                  aria-label="Mobile preview"
+                  className="border-slate-300 bg-white text-slate-800 hover:bg-slate-100 data-[state=on]:bg-slate-800 data-[state=on]:text-white"
+                >
                   <Smartphone className="h-4 w-4" />
                 </ToggleGroupItem>
               </ToggleGroup>
+              <div className="mx-1 flex items-center rounded-md border border-slate-200 bg-white">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 rounded-r-none text-slate-800 hover:bg-slate-100"
+                  onClick={() => changePageZoom(-PAGE_ZOOM_STEP)}
+                  disabled={pageZoom <= MIN_PAGE_ZOOM}
+                  title="Zoom out"
+                >
+                  <Minimize2 className="h-4 w-4" />
+                </Button>
+                <button
+                  type="button"
+                  className="h-8 min-w-14 border-x border-slate-200 px-2 text-xs font-semibold text-slate-700"
+                  onClick={() => setPageZoom(100)}
+                  title="Reset zoom. Use Ctrl + scroll to zoom, or scroll normally to move through the page."
+                >
+                  {pageZoom}%
+                </button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 rounded-l-none text-slate-800 hover:bg-slate-100"
+                  onClick={() => changePageZoom(PAGE_ZOOM_STEP)}
+                  disabled={pageZoom >= MAX_PAGE_ZOOM}
+                  title="Zoom in"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </Button>
+              </div>
               <Button
                 size="sm"
                 variant="outline"
+                className="border-slate-300 bg-white text-slate-900 hover:bg-slate-100 disabled:text-slate-400"
                 onClick={undo}
                 disabled={!past.length}
                 title="Undo"
@@ -1955,6 +2042,7 @@ export function NewspaperLayoutEditor({
               <Button
                 size="sm"
                 variant="outline"
+                className="border-slate-300 bg-white text-slate-900 hover:bg-slate-100 disabled:text-slate-400"
                 onClick={redo}
                 disabled={!future.length}
                 title="Redo"
@@ -1964,6 +2052,7 @@ export function NewspaperLayoutEditor({
               <Button
                 size="sm"
                 variant="outline"
+                className="border-slate-300 bg-white text-slate-900 hover:bg-slate-100 disabled:text-slate-400"
                 onClick={resetLayout}
                 disabled={!canEdit}
                 title="Reset page"
@@ -1981,7 +2070,10 @@ export function NewspaperLayoutEditor({
             </div>
           </div>
 
-          <div className="flex h-[calc(100vh-238px)] min-h-[760px] items-start justify-center overflow-auto p-4">
+          <div
+            className="flex h-[calc(100vh-238px)] min-h-[760px] items-start justify-center overflow-auto bg-slate-200 p-4"
+            onWheel={handlePageWheel}
+          >
             <div
               className="relative shrink-0"
               style={{
@@ -2007,23 +2099,21 @@ export function NewspaperLayoutEditor({
                           gridTemplateRows: "86px",
                         }}
                       >
-                        {hasHeaderAd && (
-                          <ArticleSlot
-                            slot={FRONT_PAGE_HEADER_AD_SLOT}
-                            assignment={headerAdAssignment}
-                            selected={selectedSlot?.id === FRONT_PAGE_HEADER_AD_SLOT_ID}
-                            previewMode={previewMode}
-                            canEdit={canEdit}
-                            onSelect={() => setSelectedSlotId(FRONT_PAGE_HEADER_AD_SLOT_ID)}
-                            onUpdateAssignment={(nextAssignment) =>
-                              setAssignment(FRONT_PAGE_HEADER_AD_SLOT_ID, nextAssignment)
-                            }
-                          />
-                        )}
+                        <ArticleSlot
+                          slot={FRONT_PAGE_HEADER_AD_SLOT}
+                          assignment={headerAdAssignment}
+                          selected={selectedSlot?.id === FRONT_PAGE_HEADER_AD_SLOT_ID}
+                          previewMode={previewMode}
+                          canEdit={canEdit}
+                          onSelect={() => setSelectedSlotId(FRONT_PAGE_HEADER_AD_SLOT_ID)}
+                          onUpdateAssignment={(nextAssignment) =>
+                            setAssignment(FRONT_PAGE_HEADER_AD_SLOT_ID, nextAssignment)
+                          }
+                        />
                         <div
                           className="flex flex-col items-center justify-center text-center"
                           style={{
-                            gridColumn: hasHeaderAd ? "4 / span 6" : "4 / span 9",
+                            gridColumn: "4 / span 6",
                             gridRow: "1 / span 1",
                           }}
                         >

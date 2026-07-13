@@ -86,7 +86,7 @@ function isMissingBackgroundColorColumn(error: unknown) {
   );
 }
 
-function needsKannadaConversion(text: string) {
+function needsAiProcessing(text: string) {
   const trimmed = text.trim();
   return trimmed.length >= 20 && LATIN_TEXT_RE.test(trimmed) && !KANNADA_TEXT_RE.test(trimmed);
 }
@@ -157,7 +157,7 @@ export function ArticleCard({
     article.summary ??
     article.headline ??
     "";
-  const showConvertToKannada = editable && needsKannadaConversion(articleDisplayText);
+  const showAiProcessing = editable && needsAiProcessing(articleDisplayText);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -175,7 +175,11 @@ export function ArticleCard({
         background_color: nextBackgroundColor,
         workflow_status: nextWorkflowStatus,
       };
-      const { error } = await supabase.from("articles").update(payload).eq("id", article.id);
+      const { error } = await supabase
+        .from("articles")
+        .update(payload)
+        .eq("id", article.id)
+        .eq("newspaper_id", article.newspaper_id);
       if (!error) return { usedFallback: false };
 
       if (!isMissingBackgroundColorColumn(error)) throw error;
@@ -189,7 +193,8 @@ export function ArticleCard({
           image_source: payload.image_source,
           workflow_status: payload.workflow_status,
         })
-        .eq("id", article.id);
+        .eq("id", article.id)
+        .eq("newspaper_id", article.newspaper_id);
       if (fallbackError) throw fallbackError;
       return { usedFallback: true };
     },
@@ -229,10 +234,10 @@ export function ArticleCard({
     onError: (e: unknown) => toast.error(errorMessage(e)),
   });
 
-  const convertToKannada = useMutation({
+  const processWithAi = useMutation({
     mutationFn: async () => {
       const source = sourceText.trim();
-      if (source.length < 20) throw new Error("Article text is too short to convert");
+      if (source.length < 20) throw new Error("Article text is too short to process");
 
       const ai = await aiFn.process(source);
       const { error } = await supabase
@@ -251,7 +256,8 @@ export function ArticleCard({
             priority: true,
           },
         })
-        .eq("id", article.id);
+        .eq("id", article.id)
+        .eq("newspaper_id", article.newspaper_id);
       if (error) throw error;
       return ai;
     },
@@ -259,7 +265,7 @@ export function ArticleCard({
       setHeadline(ai.headline);
       setBody(ai.corrected_text);
       qc.invalidateQueries({ queryKey: ["articles", article.newspaper_id] });
-      toast.success("Converted to Kannada");
+      toast.success("Article processed with AI");
     },
     onError: (e: unknown) => toast.error(errorMessage(e)),
   });
@@ -272,7 +278,8 @@ export function ArticleCard({
         image_source: source,
         workflow_status: imageWorkflow(true),
       })
-      .eq("id", article.id);
+      .eq("id", article.id)
+      .eq("newspaper_id", article.newspaper_id);
     if (error) throw error;
 
     setImageUrl(nextImageUrl);
@@ -305,7 +312,7 @@ export function ArticleCard({
     try {
       const { image_url } = await aiFn.image({
         prompt: imagePrompt.trim() || undefined,
-        headline: headline || article.headline || "Kannada news article",
+        headline: headline || article.headline || "News article",
         summary: article.summary,
         category: article.category,
         priority_score: article.priority_score,
@@ -416,7 +423,8 @@ export function ArticleCard({
     await supabase
       .from("articles")
       .update({ workflow_status: imageWorkflow(true) })
-      .eq("id", article.id);
+      .eq("id", article.id)
+      .eq("newspaper_id", article.newspaper_id);
     qc.invalidateQueries({ queryKey: ["articles"] });
   }
 
@@ -614,19 +622,19 @@ export function ArticleCard({
           <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
             Edit
           </Button>
-          {showConvertToKannada && (
+          {showAiProcessing && (
             <Button
               size="sm"
               variant="outline"
-              onClick={() => convertToKannada.mutate()}
-              disabled={convertToKannada.isPending}
+              onClick={() => processWithAi.mutate()}
+              disabled={processWithAi.isPending}
             >
-              {convertToKannada.isPending ? (
+              {processWithAi.isPending ? (
                 <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
               ) : (
                 <Sparkles className="mr-1 h-3.5 w-3.5" />
               )}
-              Convert to Kannada
+              Process with AI
             </Button>
           )}
           <Button size="sm" variant="outline" onClick={genImage} disabled={genLoading}>

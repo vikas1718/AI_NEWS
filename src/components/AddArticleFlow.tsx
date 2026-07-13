@@ -1,14 +1,22 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { aiFn, type Article } from "@/lib/api";
+import { aiFn } from "@/lib/api";
 import { WorkflowTracker } from "@/components/WorkflowTracker";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { Sparkles, Upload, ImageIcon, FileText, ScanLine, Wand2, Loader2 } from "lucide-react";
+import {
+  FileText,
+  ImageIcon,
+  Loader2,
+  Paperclip,
+  ScanLine,
+  Sparkles,
+  Wand2,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 interface Props {
@@ -16,13 +24,20 @@ interface Props {
   onCreated?: () => void;
 }
 
+type AttachedFile = {
+  file: File;
+  sourceType: "image" | "pdf" | "scan";
+  previewUrl: string | null;
+};
+
 type UploadedFileInfo = {
   url: string;
   name: string;
   type: string;
 };
 
-const ARTICLE_PLACEHOLDER = "Paste English or Kannada article text. Run AI pipeline will convert it to Kannada by default.";
+const ARTICLE_PLACEHOLDER =
+  "Write or paste article text here. You can also attach an image, PDF, or scanned document.";
 const DEFAULT_TARGET_WORD_LIMIT = 250;
 const MIN_TARGET_WORD_LIMIT = 80;
 const MAX_TARGET_WORD_LIMIT = 1200;
@@ -33,13 +48,35 @@ function normalizeTargetWordLimit(value: number) {
   return Math.min(MAX_TARGET_WORD_LIMIT, Math.max(MIN_TARGET_WORD_LIMIT, Math.round(value)));
 }
 
+function getAttachmentLabel(sourceType: AttachedFile["sourceType"]) {
+  if (sourceType === "image") return "Image";
+  if (sourceType === "pdf") return "PDF";
+  return "Scan";
+}
+
 export function AddArticleFlow({ newspaperId, onCreated }: Props) {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<"text" | "image" | "pdf" | "scan">("text");
   const [rawText, setRawText] = useState("");
+  const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
   const [targetWordLimit, setTargetWordLimit] = useState(DEFAULT_TARGET_WORD_LIMIT);
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
+
+  const previewUrl = useMemo(() => attachedFile?.previewUrl ?? null, [attachedFile]);
+
+  function attachFile(file: File, sourceType: AttachedFile["sourceType"]) {
+    if (attachedFile?.previewUrl) URL.revokeObjectURL(attachedFile.previewUrl);
+    setAttachedFile({
+      file,
+      sourceType,
+      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
+    });
+  }
+
+  function removeAttachedFile() {
+    if (attachedFile?.previewUrl) URL.revokeObjectURL(attachedFile.previewUrl);
+    setAttachedFile(null);
+  }
 
   async function uploadFile(file: File): Promise<UploadedFileInfo> {
     const path = `${newspaperId}/${crypto.randomUUID()}-${file.name}`;
@@ -50,72 +87,91 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
   }
 
   const runPipeline = useMutation({
-    mutationFn: async (fileInfo?: UploadedFileInfo) => {
+    mutationFn: async () => {
+      const typedText = rawText.trim();
+      if (!typedText && !attachedFile) {
+        throw new Error("Paste text or attach an image, PDF, or scan first");
+      }
+
       setGenerating(true);
       const workflow: Record<string, boolean> = { uploaded: true };
+      let ocrText: string | null = null;
+      let textForAi = typedText;
+      let inputType = typedText ? "text" : "attachment";
 
-      let text = rawText;
-      let inputType = tab;
+      if (attachedFile) {
+        setUploading(true);
+        const fileInfo = await uploadFile(attachedFile.file);
+        setUploading(false);
+        inputType = typedText ? `text+${attachedFile.sourceType}` : attachedFile.sourceType;
 
-      // OCR step
-      if (tab !== "text") {
         const ocr = await aiFn.ocr({
-          fileUrl: fileInfo?.url,
-          inputType,
-          fileName: fileInfo?.name,
-          mimeType: fileInfo?.type,
+          fileUrl: fileInfo.url,
+          inputType: attachedFile.sourceType,
+          fileName: fileInfo.name,
+          mimeType: fileInfo.type,
         });
-        text = ocr.ocr_text;
+        ocrText = ocr.ocr_text;
         workflow.ocr = true;
-        toast.info("OCR complete. Converting to Kannada...");
+
+        if (!textForAi) {
+          textForAi = ocrText;
+        }
       } else {
         workflow.ocr = true;
       }
 
-      // Kannada conversion + article processing
-      workflow.ai_processing = true;
-      const ai = await aiFn.process(text, { targetWordLimit: normalizeTargetWordLimit(targetWordLimit) });
-      workflow.headline = true; workflow.category = true; workflow.priority = true; workflow.image = false;
+      if (textForAi.trim().length < 20) {
+        throw new Error("Add more article content before running the AI pipeline");
+      }
 
-      // Insert article only after the Kannada conversion succeeds.
-      const { data: draft, error: e1 } = await supabase.from("articles").insert({
-        newspaper_id: newspaperId,
-        raw_input_type: inputType,
-        raw_text: tab === "text" ? text : null,
-        ocr_text: tab !== "text" ? text : null,
-        corrected_text: ai.corrected_text,
-        headline: ai.headline,
-        summary: ai.summary,
-        category: ai.category,
-        priority_score: ai.priority_score,
-        workflow_status: { ...workflow, ready_for_layout: false },
-      }).select().single();
-      if (e1) throw e1;
+      workflow.ai_processing = true;
+      const ai = await aiFn.process(textForAi, {
+        targetWordLimit: normalizeTargetWordLimit(targetWordLimit),
+      });
+      workflow.headline = true;
+      workflow.category = true;
+      workflow.priority = true;
+      workflow.image = false;
+
+      const { data: draft, error } = await supabase
+        .from("articles")
+        .insert({
+          newspaper_id: newspaperId,
+          raw_input_type: inputType,
+          raw_text: typedText || null,
+          ocr_text: ocrText,
+          corrected_text: ai.corrected_text,
+          headline: ai.headline,
+          summary: ai.summary,
+          category: ai.category,
+          priority_score: ai.priority_score,
+          workflow_status: { ...workflow, ready_for_layout: false },
+        })
+        .select()
+        .single();
+      if (error) throw error;
 
       return draft;
     },
     onSuccess: () => {
       setRawText("");
-      setGenerating(false);
+      removeAttachedFile();
       qc.invalidateQueries({ queryKey: ["articles", newspaperId] });
-      toast.success("Article added in Kannada. Image step pending");
+      toast.success("Article added. Image step pending");
       onCreated?.();
     },
-    onError: (e: any) => { setGenerating(false); toast.error(e.message); },
+    onError: (error: unknown) =>
+      toast.error(error instanceof Error ? error.message : "Could not add article"),
+    onSettled: () => {
+      setUploading(false);
+      setGenerating(false);
+    },
   });
-
-  async function handleFile(file: File) {
-    setUploading(true);
-    try {
-      const fileInfo = await uploadFile(file);
-      await runPipeline.mutateAsync(fileInfo);
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally { setUploading(false); }
-  }
 
   const busy = uploading || generating || runPipeline.isPending;
   const normalizedTargetWordLimit = normalizeTargetWordLimit(targetWordLimit);
+  const canProcess = Boolean(rawText.trim() || attachedFile) && !busy;
 
   return (
     <div className="rounded-lg border border-primary/20 bg-card p-5 shadow-sm">
@@ -125,9 +181,10 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
           <h3 className="text-lg font-semibold">Add article</h3>
         </div>
         <div className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-          Kannada AI pipeline
+          AI article pipeline
         </div>
       </div>
+
       <div className="mb-4 grid gap-3 rounded-md border bg-muted/30 p-3 lg:grid-cols-[minmax(0,1fr)_auto_180px] lg:items-end">
         <div>
           <Label htmlFor="target-word-limit">Target word limit</Label>
@@ -163,35 +220,153 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
           className="bg-background"
         />
       </div>
-      <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
-        <TabsList className="grid w-full grid-cols-4 md:w-[520px]">
-          <TabsTrigger value="text"><FileText className="mr-1 h-3.5 w-3.5" />Text</TabsTrigger>
-          <TabsTrigger value="image"><ImageIcon className="mr-1 h-3.5 w-3.5" />Image</TabsTrigger>
-          <TabsTrigger value="pdf"><FileText className="mr-1 h-3.5 w-3.5" />PDF</TabsTrigger>
-          <TabsTrigger value="scan"><ScanLine className="mr-1 h-3.5 w-3.5" />Scan</TabsTrigger>
-        </TabsList>
-        <TabsContent value="text" className="mt-4 space-y-3">
-          <Label>Article text</Label>
-          <Textarea rows={10} value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder={ARTICLE_PLACEHOLDER} className="min-h-[260px] font-kannada text-base" />
-          <Button onClick={() => runPipeline.mutate(undefined)} disabled={busy || rawText.trim().length < 20} className="w-full">
-            {busy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Converting to Kannada...</> : <><Wand2 className="mr-2 h-4 w-4" /> Run AI pipeline</>}
-          </Button>
-        </TabsContent>
-        {(["image", "pdf", "scan"] as const).map((t) => (
-          <TabsContent key={t} value={t} className="mt-4 space-y-3">
-            <label className="flex min-h-[260px] cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 text-center hover:bg-accent/30">
-              <Upload className="h-6 w-6 text-muted-foreground" />
-              <div className="text-sm font-medium">Click to upload {t}</div>
-              <div className="text-xs text-muted-foreground">OCR runs first, then Kannada conversion</div>
-              <input type="file" className="hidden" accept={t === "image" ? "image/*" : t === "pdf" ? "application/pdf" : "image/*,application/pdf"} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-            </label>
-            {busy && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Uploaded, OCR, Kannada conversion...</div>}
-          </TabsContent>
-        ))}
-      </Tabs>
+
+      <div className="space-y-3">
+        <Label>Article content</Label>
+        <div className="overflow-hidden rounded-lg border bg-background">
+          <Textarea
+            rows={10}
+            value={rawText}
+            onChange={(event) => setRawText(event.target.value)}
+            placeholder={ARTICLE_PLACEHOLDER}
+            disabled={busy}
+            className="min-h-[260px] resize-y border-0 font-kannada text-base shadow-none focus-visible:ring-0"
+          />
+
+          {attachedFile && (
+            <div className="border-t bg-muted/30 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  {previewUrl ? (
+                    <img
+                      src={previewUrl}
+                      alt=""
+                      className="h-12 w-12 rounded border object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-12 w-12 items-center justify-center rounded border bg-background">
+                      <Paperclip className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-primary">
+                      {getAttachmentLabel(attachedFile.sourceType)} attached
+                    </div>
+                    <div className="truncate text-sm text-muted-foreground">
+                      {attachedFile.file.name}
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={removeAttachedFile}
+                  disabled={busy}
+                >
+                  <X className="mr-1 h-4 w-4" />
+                  Remove
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 border-t bg-muted/20 p-3">
+            <AttachButton
+              label="Attach image"
+              icon={ImageIcon}
+              accept="image/*"
+              disabled={busy}
+              onFile={(file) => attachFile(file, "image")}
+            />
+            <AttachButton
+              label="Attach PDF"
+              icon={FileText}
+              accept="application/pdf"
+              disabled={busy}
+              onFile={(file) => attachFile(file, "pdf")}
+            />
+            <AttachButton
+              label="Attach scan"
+              icon={ScanLine}
+              accept="image/*,application/pdf"
+              disabled={busy}
+              onFile={(file) => attachFile(file, "scan")}
+            />
+          </div>
+        </div>
+
+        <Button
+          onClick={() => runPipeline.mutate()}
+          disabled={!canProcess}
+          className="w-full"
+        >
+          {busy ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              {uploading ? "Uploading source..." : "Running AI pipeline..."}
+            </>
+          ) : (
+            <>
+              <Wand2 className="mr-2 h-4 w-4" />
+              Run AI pipeline
+            </>
+          )}
+        </Button>
+      </div>
+
       <div className="mt-4">
-        <WorkflowTracker status={{ uploaded: busy, ocr: false, ai_processing: false, headline: false, category: false, priority: false, image: false, ready_for_layout: false }} />
+        <WorkflowTracker
+          status={{
+            uploaded: busy,
+            ocr: false,
+            ai_processing: false,
+            headline: false,
+            category: false,
+            priority: false,
+            image: false,
+            ready_for_layout: false,
+          }}
+        />
       </div>
     </div>
+  );
+}
+
+function AttachButton({
+  label,
+  icon: Icon,
+  accept,
+  disabled,
+  onFile,
+}: {
+  label: string;
+  icon: typeof ImageIcon;
+  accept: string;
+  disabled: boolean;
+  onFile: (file: File) => void;
+}) {
+  return (
+    <label
+      className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium transition ${
+        disabled
+          ? "pointer-events-none opacity-50"
+          : "bg-background hover:bg-accent hover:text-accent-foreground"
+      }`}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+      <input
+        type="file"
+        className="hidden"
+        accept={accept}
+        disabled={disabled}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) onFile(file);
+          event.currentTarget.value = "";
+        }}
+      />
+    </label>
   );
 }
