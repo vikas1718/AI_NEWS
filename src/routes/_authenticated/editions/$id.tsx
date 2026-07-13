@@ -1,6 +1,6 @@
 import { createFileRoute, Link, redirect, useNavigate, useRouteContext } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import {
   ArrowLeft,
@@ -42,6 +42,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import type { Article, Newspaper } from "@/lib/api";
+import { estimateLayoutWordTarget } from "@/lib/layout-word-targets";
 import { hasPermission } from "@/lib/rbac";
 import { supabaseUntyped } from "@/lib/supabase-untyped";
 
@@ -59,6 +60,22 @@ type SavedPlacement = {
   pageNumber: number;
   slotKind: string;
   slotWidth: number;
+};
+
+type WordTargetSlot = {
+  id: string;
+  kind?: string;
+  w: number;
+  h: number;
+};
+
+type WordTargetAssignment = {
+  articleId?: string;
+  image?: {
+    position?: "left" | "right" | "center" | "full";
+    widthPct?: number;
+  };
+  ad?: unknown;
 };
 
 type PageTurnPreviewProps = {
@@ -125,6 +142,52 @@ function savedEditorPlacements(layoutJson: unknown): SavedPlacement[] {
   }
 
   return placements;
+}
+
+function recommendedLayoutWordTarget(layoutJson: unknown, articles: Article[]) {
+  if (!isRecord(layoutJson) || !isRecord(layoutJson.pages)) return undefined;
+
+  const articleIds = new Set(articles.map((article) => article.id));
+  const emptyTargets: number[] = [];
+  const articleTargets: number[] = [];
+
+  for (const pageState of Object.values(layoutJson.pages)) {
+    if (!isRecord(pageState) || !Array.isArray(pageState.slots) || !isRecord(pageState.assignments))
+      continue;
+
+    for (const rawSlot of pageState.slots) {
+      if (!isRecord(rawSlot) || typeof rawSlot.id !== "string") continue;
+      if (typeof rawSlot.w !== "number" || typeof rawSlot.h !== "number") continue;
+
+      const slot: WordTargetSlot = {
+        id: rawSlot.id,
+        kind: typeof rawSlot.kind === "string" ? rawSlot.kind : "story",
+        w: rawSlot.w,
+        h: rawSlot.h,
+      };
+      const assignment = pageState.assignments[slot.id] as WordTargetAssignment | undefined;
+      const isPlacedArticle = Boolean(
+        assignment?.articleId && articleIds.has(assignment.articleId),
+      );
+
+      if (slot.kind === "ad" && !isPlacedArticle) continue;
+      if (assignment?.ad && !isPlacedArticle) continue;
+
+      const target = estimateLayoutWordTarget(slot, assignment?.image);
+      if (isPlacedArticle) {
+        articleTargets.push(target);
+      } else {
+        emptyTargets.push(target);
+      }
+    }
+  }
+
+  if (emptyTargets.length > 0) return Math.max(...emptyTargets);
+  if (articleTargets.length === 0) return undefined;
+
+  return Math.round(
+    articleTargets.reduce((total, target) => total + target, 0) / articleTargets.length / 25,
+  ) * 25;
 }
 
 function PageTurnPreview({
@@ -572,6 +635,11 @@ function EditionWorkspace() {
       toast.error(error instanceof Error ? error.message : "Could not delete newspaper"),
   });
 
+  const recommendedTargetWordLimit = useMemo(
+    () => recommendedLayoutWordTarget(latestLayout, articles),
+    [articles, latestLayout],
+  );
+
   if (!newspaper) return <div className="text-sm text-muted-foreground">Loading...</div>;
 
   const laidOut = articles.filter((article) => article.page_number);
@@ -721,7 +789,10 @@ function EditionWorkspace() {
 
         <TabsContent value="articles" className="mt-4 space-y-6">
           {canEdit ? (
-            <AddArticleFlow newspaperId={id} />
+            <AddArticleFlow
+              newspaperId={id}
+              recommendedTargetWordLimit={recommendedTargetWordLimit}
+            />
           ) : (
             <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
               Read-only while edition is under review.

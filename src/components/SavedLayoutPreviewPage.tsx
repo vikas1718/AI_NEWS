@@ -42,6 +42,7 @@ type SavedPageState = {
   rowScale?: number;
   columnScale?: number;
   gutter?: number;
+  spacingVersion?: number;
   headerQuote?: string;
 };
 
@@ -61,6 +62,11 @@ const PAGE_WIDTH = 780;
 const PAGE_HEIGHT = 1084;
 const GRID_COLUMNS = 12;
 const GRID_ROWS = 18;
+const BLOCK_SPACING_VERSION = 2;
+const DEFAULT_BLOCK_GUTTER = 3;
+const LEGACY_DEFAULT_BLOCK_GUTTER = 8;
+const MIN_BLOCK_GUTTER = 0;
+const MAX_BLOCK_GUTTER = 8;
 const FRONT_PAGE_HEADER_AD_SLOT_ID = "front_page_header_left_ad";
 const FRONT_PAGE_HEADER_QUOTE_SLOT_ID = "front_page_header_quote";
 const DEFAULT_HEADER_QUOTE = "ದಿನದ ಚಿಂತನೆ / Quote";
@@ -121,6 +127,16 @@ function isDefaultAdPlaceholder(assignment?: SavedAssignment) {
 
 function hasAssignedAd(assignment?: SavedAssignment) {
   return Boolean(assignment?.ad && !isDefaultAdPlaceholder(assignment));
+}
+
+function savedPageGutter(pageState: SavedPageState) {
+  const rawGutter = pageState.gutter ?? DEFAULT_BLOCK_GUTTER;
+  const clampedGutter = Math.min(MAX_BLOCK_GUTTER, Math.max(MIN_BLOCK_GUTTER, rawGutter));
+  const legacyDefaultGutter =
+    (pageState.spacingVersion ?? 1) < BLOCK_SPACING_VERSION &&
+    clampedGutter === LEGACY_DEFAULT_BLOCK_GUTTER;
+
+  return legacyDefaultGutter ? DEFAULT_BLOCK_GUTTER : clampedGutter;
 }
 
 function PrajavaniMasthead() {
@@ -226,7 +242,7 @@ export function SavedLayoutPreviewPage({ articles, layoutJson, pageNumber }: Pro
     width: PAGE_WIDTH,
     minWidth: PAGE_WIDTH,
     height: PAGE_HEIGHT,
-    padding: 24,
+    padding: 16,
     boxSizing: "border-box",
   };
 
@@ -237,10 +253,10 @@ export function SavedLayoutPreviewPage({ articles, layoutJson, pageNumber }: Pro
         className="newsprint mx-auto flex flex-col overflow-hidden shadow-xl"
         style={pageStyle}
       >
-        <div className="mb-3 border-b-4 border-double border-newsprint-ink pb-2">
+        <div className="mb-2 border-b-4 border-double border-newsprint-ink pb-2">
           {pageNumber === 1 ? (
             <div
-              className="grid items-stretch gap-3"
+              className="grid items-stretch gap-2"
               style={{
                 gridTemplateColumns: `repeat(${GRID_COLUMNS}, minmax(0, 1fr))`,
                 gridTemplateRows: "86px",
@@ -271,7 +287,7 @@ export function SavedLayoutPreviewPage({ articles, layoutJson, pageNumber }: Pro
           style={{
             gridTemplateColumns: `repeat(${GRID_COLUMNS}, minmax(0, ${(pageState.columnScale ?? 100) / 100}fr))`,
             gridTemplateRows: `repeat(${GRID_ROWS}, minmax(0, ${(pageState.rowScale ?? 100) / 100}fr))`,
-            gap: pageState.gutter ?? 8,
+            gap: savedPageGutter(pageState),
           }}
         >
           {pageState.slots.map((slot) => {

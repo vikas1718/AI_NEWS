@@ -122,13 +122,8 @@ export function normalizeNewspaperTextTuning(tuning?: NewspaperTextTuning): News
   };
 }
 
-function imageCaption(article?: Article) {
-  if (!article) return "";
-  return article.summary
-    ? article.summary.slice(0, 110)
-    : article.headline
-      ? `Photo: ${article.headline}`
-      : "Photo";
+function imageCaption() {
+  return "";
 }
 
 export function optimizeNewspaperImagePlacement(
@@ -149,8 +144,8 @@ export function optimizeNewspaperImagePlacement(
       wrap: "square",
       widthPct: 100,
       aspectRatio: wideSlot ? 16 / 9 : 4 / 3,
-      margin: 6,
-      caption: imageCaption(article),
+      margin: 4,
+      caption: imageCaption(),
     };
   }
 
@@ -160,8 +155,8 @@ export function optimizeNewspaperImagePlacement(
       wrap: "square",
       widthPct: clamp(slot.w * 12, 52, 88),
       aspectRatio: 4 / 3,
-      margin: 6,
-      caption: imageCaption(article),
+      margin: 4,
+      caption: imageCaption(),
     };
   }
 
@@ -170,8 +165,8 @@ export function optimizeNewspaperImagePlacement(
     wrap: "tight",
     widthPct: dense ? 36 : 44,
     aspectRatio: 4 / 3,
-    margin: 8,
-    caption: imageCaption(article),
+    margin: 5,
+    caption: imageCaption(),
   };
 }
 
@@ -188,7 +183,7 @@ export function normalizeNewspaperImagePlacement(
   return {
     ...next,
     widthPct: clamp(next.widthPct, MIN_IMAGE_WIDTH_PCT, maxWidth),
-    margin: clamp(next.margin, 4, 14),
+    margin: clamp(next.margin, 2, 6),
     aspectRatio: clamp(next.aspectRatio, 0.7, 2),
   };
 }
@@ -226,12 +221,12 @@ export function getNewspaperArticleFit(
     density > 48 ? maxColumns : density > 30 ? Math.max(1, maxColumns - 1) : slot.w >= 8 ? 2 : 1,
   );
   const image = normalizeNewspaperImagePlacement(article, slot, assignment?.image);
-  const spacing = density > 55 ? 2 : density > 36 ? 4 : 6;
-  const padding = slot.w <= 4 || density > 58 ? 6 : slot.kind === "lead" ? 10 : 8;
-  const columnGap = slot.w <= 4 ? 7 : slot.w >= 9 ? 11 : 9;
-  const bodyLineHeight = density > 58 ? 1.14 : density > 38 ? 1.18 : 1.24;
-  const headlineLineHeight = slot.kind === "lead" ? 1 : 1.04;
-  const paragraphGap = density > 55 ? 2 : density > 36 ? 3 : 5;
+  const spacing = density > 55 ? 1 : density > 36 ? 2 : 3;
+  const padding = slot.w <= 4 || density > 58 ? 4 : slot.kind === "lead" ? 7 : 5;
+  const columnGap = slot.w <= 4 ? 4 : slot.w >= 9 ? 7 : 5;
+  const bodyLineHeight = density > 58 ? 1.12 : density > 38 ? 1.16 : 1.2;
+  const headlineLineHeight = slot.kind === "lead" ? 0.98 : 1.02;
+  const paragraphGap = density > 55 ? 1 : density > 36 ? 2 : 3;
   const justifyBody = slot.w >= 4 && bodySize >= 6.5;
 
   return {
@@ -254,7 +249,7 @@ export function NewspaperArticleBlockContent({
   slot,
   assignment,
   imageControls,
-  hideImageCaption = false,
+  hideImageCaption = true,
   hideArticleBackground = false,
   disableAutoImagePlacement = false,
 }: {

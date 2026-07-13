@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { aiFn } from "@/lib/api";
@@ -22,6 +22,7 @@ import { toast } from "sonner";
 interface Props {
   newspaperId: string;
   onCreated?: () => void;
+  recommendedTargetWordLimit?: number;
 }
 
 type AttachedFile = {
@@ -38,10 +39,10 @@ type UploadedFileInfo = {
 
 const ARTICLE_PLACEHOLDER =
   "Write or paste article text here. You can also attach an image, PDF, or scanned document.";
-const DEFAULT_TARGET_WORD_LIMIT = 250;
+const DEFAULT_TARGET_WORD_LIMIT = 500;
 const MIN_TARGET_WORD_LIMIT = 80;
 const MAX_TARGET_WORD_LIMIT = 1200;
-const TARGET_WORD_LIMIT_PRESETS = [150, 250, 400, 600];
+const TARGET_WORD_LIMIT_PRESETS = [250, 400, 600, 800, 1000];
 
 function normalizeTargetWordLimit(value: number) {
   if (!Number.isFinite(value)) return DEFAULT_TARGET_WORD_LIMIT;
@@ -54,15 +55,29 @@ function getAttachmentLabel(sourceType: AttachedFile["sourceType"]) {
   return "Scan";
 }
 
-export function AddArticleFlow({ newspaperId, onCreated }: Props) {
+export function AddArticleFlow({ newspaperId, onCreated, recommendedTargetWordLimit }: Props) {
   const qc = useQueryClient();
   const [rawText, setRawText] = useState("");
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
-  const [targetWordLimit, setTargetWordLimit] = useState(DEFAULT_TARGET_WORD_LIMIT);
+  const defaultTargetWordLimit = normalizeTargetWordLimit(
+    recommendedTargetWordLimit ?? DEFAULT_TARGET_WORD_LIMIT,
+  );
+  const [targetWordLimit, setTargetWordLimit] = useState(defaultTargetWordLimit);
+  const [targetWordLimitTouched, setTargetWordLimitTouched] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
 
   const previewUrl = useMemo(() => attachedFile?.previewUrl ?? null, [attachedFile]);
+
+  useEffect(() => {
+    if (targetWordLimitTouched) return;
+    setTargetWordLimit(defaultTargetWordLimit);
+  }, [defaultTargetWordLimit, targetWordLimitTouched]);
+
+  function setManualTargetWordLimit(value: number) {
+    setTargetWordLimitTouched(true);
+    setTargetWordLimit(value);
+  }
 
   function attachFile(file: File, sourceType: AttachedFile["sourceType"]) {
     if (attachedFile?.previewUrl) URL.revokeObjectURL(attachedFile.previewUrl);
@@ -157,6 +172,8 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
     onSuccess: () => {
       setRawText("");
       removeAttachedFile();
+      setTargetWordLimitTouched(false);
+      setTargetWordLimit(defaultTargetWordLimit);
       qc.invalidateQueries({ queryKey: ["articles", newspaperId] });
       toast.success("Article added. Image step pending");
       onCreated?.();
@@ -189,7 +206,7 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
         <div>
           <Label htmlFor="target-word-limit">Target word limit</Label>
           <p className="mt-1 text-xs text-muted-foreground">
-            AI will expand, summarize, or polish the article to fit this limit.
+            Default is based on the current newspaper block size and image space.
           </p>
         </div>
         <div className="flex flex-wrap gap-1">
@@ -200,7 +217,7 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
               size="sm"
               variant={normalizedTargetWordLimit === preset ? "default" : "outline"}
               className="h-8 px-2 text-xs"
-              onClick={() => setTargetWordLimit(preset)}
+              onClick={() => setManualTargetWordLimit(preset)}
               disabled={busy}
             >
               {preset}
@@ -214,8 +231,8 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
           max={MAX_TARGET_WORD_LIMIT}
           step={10}
           value={targetWordLimit}
-          onChange={(event) => setTargetWordLimit(Number(event.target.value))}
-          onBlur={() => setTargetWordLimit(normalizedTargetWordLimit)}
+          onChange={(event) => setManualTargetWordLimit(Number(event.target.value))}
+          onBlur={() => setManualTargetWordLimit(normalizedTargetWordLimit)}
           disabled={busy}
           className="bg-background"
         />

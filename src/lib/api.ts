@@ -140,7 +140,7 @@ export const aiFn = {
       summary: string;
       category: ArticleCategory;
       priority_score: number;
-    }>("process-article-ai", { text, targetWordLimit: options.targetWordLimit ?? 250 }),
+    }>("process-article-ai", { text, targetWordLimit: options.targetWordLimit ?? 500 }),
   image: (payload: string | ImageArticlePayload) =>
     callFn<{ image_url: string }>(
       "generate-image",

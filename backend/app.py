@@ -7,7 +7,6 @@ import os
 import random
 import sys
 import traceback
-import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -34,7 +33,7 @@ VALID_CATEGORIES = {
     "Business",
     "Other",
 }
-DEFAULT_TARGET_WORD_LIMIT = 250
+DEFAULT_TARGET_WORD_LIMIT = 500
 MIN_TARGET_WORD_LIMIT = 80
 MAX_TARGET_WORD_LIMIT = 1200
 
@@ -83,8 +82,8 @@ def count_words(text: str) -> int:
 
 def expansion_floor(source_word_count: int, target_word_limit: int) -> int:
     return min(
-        int(target_word_limit * 0.75),
-        max(source_word_count + 60, int(source_word_count * 2.5 + 0.999)),
+        int(target_word_limit * 0.9),
+        max(int(target_word_limit * 0.82), source_word_count + 80, int(source_word_count * 2.7 + 0.999)),
     )
 
 
@@ -100,15 +99,16 @@ def build_article_system_prompt(target_word_limit: int, retry_reason: str | None
     if retry_reason == "too_long":
         retry_rule = "\n- The previous answer exceeded the target. Rewrite corrected_text again under the limit while keeping the same strict JSON format."
     elif retry_reason == "too_short":
-        retry_rule = "\n- The previous answer was too close to the source and did not apply the length optimizer. Expand corrected_text more substantially while using only source facts."
+        retry_rule = "\n- The previous answer was too short for the layout. Rewrite corrected_text closer to the target range while using only source facts."
     else:
         retry_rule = ""
 
     return f"""{SYSTEM_PROMPT}
 
 Article length optimizer:
-- Target word limit: {target_word_limit} words. corrected_text must be at or under this limit.
-- If the source article is shorter than the target, expand it toward {int(target_word_limit * 0.85)}-{target_word_limit} words when the source has enough factual material.
+- Target word count: {target_word_limit} words. corrected_text must be at or under this limit.
+- Aim to fill the newspaper block with {int(target_word_limit * 0.9)}-{target_word_limit} words whenever the source has enough factual material.
+- If the source article is shorter than the target, expand it toward the target range instead of stopping at summary length.
 - For short inputs, do not simply translate or repeat the original. Build a complete professional newspaper article with a lead, supporting context from the supplied facts, and a clean close.
 - If the source article is longer than the target, summarize it while preserving key facts and the original meaning.
 - If the source article is already close to the target, improve grammar, clarity, readability, and newspaper style without unnecessary expansion.
@@ -120,7 +120,7 @@ Article length optimizer:
 def build_article_user_prompt(text: str, target_word_limit: int) -> str:
     source_word_count = count_words(text)
     if source_word_count < target_word_limit * 0.8:
-        action = "expand the article toward the target without adding facts"
+        action = "expand the article to fill the target range without adding facts"
     elif source_word_count > target_word_limit:
         action = "summarize the article under the target"
     else:
@@ -371,7 +371,8 @@ def ai_connection_error_message(exc: BaseException) -> str:
             "ai_failed: OpenAI text conversion timed out. Try a smaller target word limit, "
             "shorter source text, or increase OPENAI_TEXT_TIMEOUT_SECONDS."
         )
-    return f"ai_failed: OpenAI/network connection failed: {exc}"
+    detail = str(reason or exc).strip() or repr(reason or exc)
+    return f"ai_failed: OpenAI/network connection failed: {detail}"
 
 
 def count_kannada_chars(text: str) -> int:
@@ -393,17 +394,12 @@ def has_kannada_text(text: str) -> bool:
 
 
 def read_provider_json(request: urllib.request.Request, timeout: int) -> dict[str, Any]:
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"AI provider returned {exc.code}: {body or exc.reason}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"AI provider request failed: {exc.reason}") from exc
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def call_openai_chat(text: str, system_prompt: str = SYSTEM_PROMPT) -> dict[str, Any] | None:
+    timeout = openai_text_timeout()
     azure_key = get_azure_openai_key()
     if azure_key:
         deployment = env_value("AZURE_OPENAI_TEXT_DEPLOYMENT") or env_value("OPENAI_MODEL_PRIMARY")
@@ -423,8 +419,7 @@ def call_openai_chat(text: str, system_prompt: str = SYSTEM_PROMPT) -> dict[str,
             method="POST",
         )
 
-        with urllib.request.urlopen(request, timeout=60) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        data = read_provider_json(request, timeout)
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         return json.loads(content)
 
@@ -447,8 +442,7 @@ def call_openai_chat(text: str, system_prompt: str = SYSTEM_PROMPT) -> dict[str,
         method="POST",
     )
 
-    with urllib.request.urlopen(request, timeout=60) as response:
-        data = json.loads(response.read().decode("utf-8"))
+    data = read_provider_json(request, timeout)
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "{}")
     return json.loads(content)
 
@@ -1348,6 +1342,8 @@ class BackendHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             json_response(self, {"error": str(exc)}, 400)
         except RuntimeError as exc:
+            stack = traceback.format_exc()
+            print(stack, file=sys.stderr)
             message = str(exc)
             status = 500
             if message == "rate_limited":
@@ -1356,7 +1352,9 @@ class BackendHandler(BaseHTTPRequestHandler):
                 status = 402
             json_response(self, {"success": False, "error": message, "stack": stack}, status)
         except Exception as exc:
-            json_response(self, {"error": str(exc)}, 500)
+            stack = traceback.format_exc()
+            print(stack, file=sys.stderr)
+            json_response(self, {"success": False, "error": str(exc), "stack": stack}, 500)
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))

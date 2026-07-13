@@ -37,6 +37,7 @@ import {
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
@@ -44,6 +45,7 @@ import {
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { Article } from "@/lib/api";
+import { estimateLayoutWordTarget } from "@/lib/layout-word-targets";
 import {
   NewspaperArticleBlockContent,
   getNewspaperArticleFit,
@@ -105,6 +107,7 @@ type LayoutState = {
   rowScale: number;
   columnScale: number;
   gutter: number;
+  spacingVersion?: number;
   headerQuote?: string;
 };
 
@@ -154,7 +157,12 @@ const MAX_IMAGE_WIDTH_PCT = 100;
 const MIN_TEXT_SCALE = 80;
 const MAX_TEXT_SCALE = 130;
 const AUTO_FIT_TEXT_SCALE_LIMIT = 125;
-const AUTO_FIT_TARGET_FILL = 0.78;
+const AUTO_FIT_TARGET_FILL = 0.88;
+const BLOCK_SPACING_VERSION = 2;
+const DEFAULT_BLOCK_GUTTER = 3;
+const LEGACY_DEFAULT_BLOCK_GUTTER = 8;
+const MIN_BLOCK_GUTTER = 0;
+const MAX_BLOCK_GUTTER = 8;
 const FRONT_PAGE_HEADER_AD_SLOT_ID = "front_page_header_left_ad";
 const FRONT_PAGE_HEADER_QUOTE_SLOT_ID = "front_page_header_quote";
 const DEFAULT_HEADER_QUOTE = "ದಿನದ ಚಿಂತನೆ / Quote";
@@ -433,6 +441,10 @@ const RIGHT_SIDE_SLOT_OVERRIDES: Record<
 };
 
 function alignRightSideAds(pageState: LayoutState): LayoutState {
+  if ((pageState.spacingVersion ?? 1) >= BLOCK_SPACING_VERSION) {
+    return pageState;
+  }
+
   return {
     ...pageState,
     slots: pageState.slots.map((slot) => {
@@ -466,7 +478,8 @@ function createInitialState(template: LayoutTemplateDef, articles: Article[]): L
     assignments: withFrontPageHeaderAdAssignment(assignments),
     rowScale: 100,
     columnScale: 100,
-    gutter: 8,
+    gutter: DEFAULT_BLOCK_GUTTER,
+    spacingVersion: BLOCK_SPACING_VERSION,
     headerQuote: DEFAULT_HEADER_QUOTE,
   };
 }
@@ -532,7 +545,8 @@ function createPageState(
     assignments: withFrontPageHeaderAdAssignment(assignments),
     rowScale: 100,
     columnScale: 100,
-    gutter: 8,
+    gutter: DEFAULT_BLOCK_GUTTER,
+    spacingVersion: BLOCK_SPACING_VERSION,
   };
 }
 
@@ -561,6 +575,7 @@ function applyTemplateToPage(pageState: LayoutState, template: LayoutTemplateDef
       assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot,
     ),
     assignments: withFrontPageHeaderAdAssignment(assignments),
+    spacingVersion: pageState.spacingVersion ?? BLOCK_SPACING_VERSION,
     headerQuote: pageState.headerQuote ?? DEFAULT_HEADER_QUOTE,
   };
 }
@@ -607,7 +622,8 @@ export function createGeneratedEditorLayout(articles: Article[], numberOfPages: 
         assignments,
         rowScale: 100,
         columnScale: 100,
-        gutter: 8,
+        gutter: DEFAULT_BLOCK_GUTTER,
+        spacingVersion: BLOCK_SPACING_VERSION,
         headerQuote: pageNumber === 1 ? DEFAULT_HEADER_QUOTE : undefined,
       },
       articleById,
@@ -637,6 +653,19 @@ function isLayoutState(value: unknown): value is LayoutState {
   );
 }
 
+function normalizeLayoutStateSpacing(state: LayoutState): LayoutState {
+  const clampedGutter = Math.min(MAX_BLOCK_GUTTER, Math.max(MIN_BLOCK_GUTTER, state.gutter));
+  const legacyDefaultGutter =
+    (state.spacingVersion ?? 1) < BLOCK_SPACING_VERSION &&
+    clampedGutter === LEGACY_DEFAULT_BLOCK_GUTTER;
+
+  return {
+    ...state,
+    gutter: legacyDefaultGutter ? DEFAULT_BLOCK_GUTTER : clampedGutter,
+    spacingVersion: BLOCK_SPACING_VERSION,
+  };
+}
+
 function savedLayoutToPageStates(
   layoutJson: unknown,
 ): { activePage: number; pageStates: Record<number, LayoutState> } | null {
@@ -646,7 +675,7 @@ function savedLayoutToPageStates(
     Object.entries(layoutJson.pages)
       .filter(([, pageState]) => isLayoutState(pageState))
       .map(([pageNumber, pageState]) => {
-        const state = alignRightSideAds(pageState as LayoutState);
+        const state = normalizeLayoutStateSpacing(alignRightSideAds(pageState as LayoutState));
         const sanitizedAssignments = sanitizeAssignments(state.assignments);
         const assignments =
           Number(pageNumber) === 1
@@ -877,7 +906,7 @@ function autoFitAssignmentForArticle(
             wrap: "square",
             widthPct: 52,
             aspectRatio: 4 / 3,
-            margin: 6,
+            margin: 4,
             caption: "",
           }),
         widthPct: Math.min(
@@ -1378,6 +1407,7 @@ export function NewspaperLayoutEditor({
   canEdit: boolean;
 }) {
   const queryClient = useQueryClient();
+  const savedLayoutQueryKey = useMemo(() => ["saved-layout", newspaperId] as const, [newspaperId]);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const articleById = useMemo(
     () => new Map(articles.map((article) => [article.id, article])),
@@ -1395,6 +1425,11 @@ export function NewspaperLayoutEditor({
   const [activeDragLabel, setActiveDragLabel] = useState("");
   const [past, setPast] = useState<LayoutState[]>([]);
   const [future, setFuture] = useState<LayoutState[]>([]);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const activePageRef = useRef(activePage);
+  const pageStatesRef = useRef(pageStates);
+  const hasUnsavedChangesRef = useRef(false);
+  const loadedSavedLayoutRef = useRef<{ id: string; version: number } | null>(null);
   const currentTemplate =
     TEMPLATE_DEFS.find((item) => item.id === state.templateId) ?? TEMPLATE_DEFS[0];
   const pageNumbers = pageNumbersFor(pageStates);
@@ -1402,7 +1437,7 @@ export function NewspaperLayoutEditor({
     activePage === 1 ? [FRONT_PAGE_HEADER_AD_SLOT, FRONT_PAGE_HEADER_QUOTE_SLOT] : [];
   const selectableSlots = [...pageHeaderSlots, ...state.slots];
   const savedLayoutQuery = useQuery({
-    queryKey: ["saved-layout", newspaperId],
+    queryKey: savedLayoutQueryKey,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("layouts")
@@ -1429,6 +1464,10 @@ export function NewspaperLayoutEditor({
   const selectedImage = selectedSlot
     ? normalizeImagePlacement(selectedArticle, selectedSlot, selectedAssignment?.image)
     : null;
+  const selectedWordTarget =
+    selectedSlot && selectedArticle
+      ? estimateLayoutWordTarget(selectedSlot, selectedArticle.image_url ? selectedImage : null)
+      : null;
   const selectedTextTuning = normalizeTextTuning(selectedAssignment?.text);
   const assignedArticleIds = new Set(
     Object.values(pageStates).flatMap((pageState) =>
@@ -1470,6 +1509,24 @@ export function NewspaperLayoutEditor({
     }),
   );
 
+  useEffect(() => {
+    activePageRef.current = activePage;
+  }, [activePage]);
+
+  useEffect(() => {
+    pageStatesRef.current = pageStates;
+  }, [pageStates]);
+
+  function markLayoutDirty() {
+    hasUnsavedChangesRef.current = true;
+    setHasUnsavedChanges(true);
+  }
+
+  function markLayoutClean() {
+    hasUnsavedChangesRef.current = false;
+    setHasUnsavedChanges(false);
+  }
+
   function changePageZoom(delta: number) {
     setPageZoom((current) => clamp(current + delta, MIN_PAGE_ZOOM, MAX_PAGE_ZOOM));
   }
@@ -1481,6 +1538,7 @@ export function NewspaperLayoutEditor({
   }
 
   function commit(updater: (current: LayoutState) => LayoutState) {
+    markLayoutDirty();
     setPageStates((currentPages) => {
       const current =
         currentPages[activePage] ?? createPageState(currentTemplate, articles, activePage);
@@ -1495,6 +1553,7 @@ export function NewspaperLayoutEditor({
 
   function selectTemplate(templateId: string) {
     const template = TEMPLATE_DEFS.find((item) => item.id === templateId) ?? TEMPLATE_DEFS[0];
+    markLayoutDirty();
     setPageStates((currentPages) => {
       const currentPage =
         currentPages[activePage] ?? createPageState(template, articles, activePage);
@@ -1524,6 +1583,7 @@ export function NewspaperLayoutEditor({
   }
 
   function addPage() {
+    markLayoutDirty();
     setPageStates((currentPages) => {
       const currentPageNumbers = pageNumbersFor(currentPages);
       const nextPageNumber = Math.max(...currentPageNumbers) + 1;
@@ -1547,6 +1607,7 @@ export function NewspaperLayoutEditor({
   function deletePage() {
     if (pageNumbers.length <= 1) return;
 
+    markLayoutDirty();
     setPageStates((currentPages) => {
       const remainingPageNumbers = pageNumbersFor(currentPages).filter(
         (pageNumber) => pageNumber !== activePage,
@@ -1571,15 +1632,26 @@ export function NewspaperLayoutEditor({
   }, [articles, currentTemplate]);
 
   useEffect(() => {
-    const savedLayout = savedLayoutToPageStates(savedLayoutQuery.data?.layout_json);
-    if (!savedLayout) return;
+    const layoutRecord = savedLayoutQuery.data;
+    const savedLayout = savedLayoutToPageStates(layoutRecord?.layout_json);
+    if (!layoutRecord || !savedLayout) return;
 
+    const version = layoutRecord.version ?? 0;
+    const loadedLayout = loadedSavedLayoutRef.current;
+    if (loadedLayout?.id === layoutRecord.id && loadedLayout.version === version) return;
+    if (hasUnsavedChangesRef.current) return;
+
+    loadedSavedLayoutRef.current = { id: layoutRecord.id, version };
     setPageStates(savedLayout.pageStates);
     setActivePage(savedLayout.activePage);
     setPast([]);
     setFuture([]);
     setSelectedSlotId(savedLayout.pageStates[savedLayout.activePage]?.slots[0]?.id ?? "");
-  }, [savedLayoutQuery.data?.id]);
+  }, [
+    savedLayoutQuery.data?.id,
+    savedLayoutQuery.data?.layout_json,
+    savedLayoutQuery.data?.version,
+  ]);
 
   function setAssignment(slotId: string, assignment?: SlotAssignment) {
     commit((current) => ({
@@ -1720,6 +1792,7 @@ export function NewspaperLayoutEditor({
   }
 
   function removePlacedArticle(pageNumber: number, slotId: string) {
+    markLayoutDirty();
     setPageStates((currentPages) => {
       const pageState = currentPages[pageNumber];
       if (!pageState) return currentPages;
@@ -1765,6 +1838,7 @@ export function NewspaperLayoutEditor({
 
     if (activeId.startsWith("article:")) {
       const articleId = activeId.replace("article:", "");
+      markLayoutDirty();
       setPageStates((currentPages) => {
         const nextPages = Object.fromEntries(
           Object.entries(currentPages).map(([pageNumber, pageState]) => [
@@ -1873,6 +1947,7 @@ export function NewspaperLayoutEditor({
       if (!historyRecorded) {
         setPast((items) => [...items.slice(-19), startState]);
         setFuture([]);
+        markLayoutDirty();
         historyRecorded = true;
       }
 
@@ -1938,6 +2013,7 @@ export function NewspaperLayoutEditor({
   function undo() {
     const previous = past[past.length - 1];
     if (!previous) return;
+    markLayoutDirty();
     setFuture((items) => [state, ...items]);
     setPast((items) => items.slice(0, -1));
     setPageStates((currentPages) => ({
@@ -1949,6 +2025,7 @@ export function NewspaperLayoutEditor({
   function redo() {
     const next = future[0];
     if (!next) return;
+    markLayoutDirty();
     setPast((items) => [...items, state]);
     setFuture((items) => items.slice(1));
     setPageStates((currentPages) => ({
@@ -1965,14 +2042,16 @@ export function NewspaperLayoutEditor({
 
   const saveLayout = useMutation({
     mutationFn: async () => {
+      const activePageSnapshot = activePageRef.current;
+      const pageStatesSnapshot = pageStatesRef.current;
       const layoutJson = {
-        active_page: activePage,
-        pages: pageStates,
+        active_page: activePageSnapshot,
+        pages: pageStatesSnapshot,
         saved_at: new Date().toISOString(),
       };
       const layoutRecord = savedLayoutQuery.data;
       const nextVersion = (layoutRecord?.version ?? 0) + 1;
-      const { error: layoutError } = layoutRecord
+      const { data: savedRecord, error: layoutError } = layoutRecord
         ? await supabase
             .from("layouts")
             .update({
@@ -1981,15 +2060,18 @@ export function NewspaperLayoutEditor({
               generated_at: new Date().toISOString(),
             })
             .eq("id", layoutRecord.id)
+            .select("id, layout_json, version")
+            .single()
         : await supabase.from("layouts").insert({
             newspaper_id: newspaperId,
             layout_json: layoutJson,
             version: nextVersion,
-          });
+          }).select("id, layout_json, version").single();
       if (layoutError) throw layoutError;
+      if (!savedRecord) throw new Error("Layout was not saved. Please try again.");
 
       let priority = 100;
-      for (const [pageNumber, pageState] of Object.entries(pageStates)) {
+      for (const [pageNumber, pageState] of Object.entries(pageStatesSnapshot)) {
         const orderedSlots = pageState.slots.filter(
           (slot) => pageState.assignments[slot.id]?.articleId,
         );
@@ -2014,10 +2096,18 @@ export function NewspaperLayoutEditor({
           priority -= 1;
         }
       }
+
+      return savedRecord as LayoutRecord;
     },
-    onSuccess: () => {
+    onSuccess: (savedRecord) => {
+      loadedSavedLayoutRef.current = {
+        id: savedRecord.id,
+        version: savedRecord.version ?? 0,
+      };
+      queryClient.setQueryData(savedLayoutQueryKey, savedRecord);
+      markLayoutClean();
       queryClient.invalidateQueries({ queryKey: ["articles"] });
-      queryClient.invalidateQueries({ queryKey: ["saved-layout", newspaperId] });
+      queryClient.invalidateQueries({ queryKey: ["saved-layout"] });
       toast.success("Custom layout saved");
     },
     onError: (error: unknown) =>
@@ -2248,9 +2338,10 @@ export function NewspaperLayoutEditor({
                 size="sm"
                 onClick={() => saveLayout.mutate()}
                 disabled={!canEdit || saveLayout.isPending}
+                title={hasUnsavedChanges ? "Save layout changes" : "Layout is saved"}
               >
                 <Save className="mr-1 h-4 w-4" />
-                Save
+                {saveLayout.isPending ? "Saving..." : hasUnsavedChanges ? "Save changes" : "Saved"}
               </Button>
             </div>
           </div>
@@ -2274,11 +2365,11 @@ export function NewspaperLayoutEditor({
                   transform: `scale(${canvasScale})`,
                 }}
               >
-                <div className="flex h-full flex-col p-6">
-                  <div className="mb-3 bg-white pb-2 text-newsprint-ink border-b-4 border-double border-newsprint-ink">
+                <div className="flex h-full flex-col p-4">
+                  <div className="mb-2 bg-white pb-2 text-newsprint-ink border-b-4 border-double border-newsprint-ink">
                     {activePage === 1 ? (
                       <div
-                        className="grid items-stretch gap-3"
+                        className="grid items-stretch gap-2"
                         style={{
                           gridTemplateColumns: `repeat(${GRID_COLUMNS}, minmax(0, 1fr))`,
                           gridTemplateRows: "86px",
@@ -2506,11 +2597,15 @@ export function NewspaperLayoutEditor({
                   <Label className="text-xs">Space between blocks</Label>
                   <Slider
                     value={[state.gutter]}
-                    min={2}
-                    max={14}
+                    min={MIN_BLOCK_GUTTER}
+                    max={MAX_BLOCK_GUTTER}
                     step={1}
                     onValueChange={([value]) =>
-                      commit((current) => ({ ...current, gutter: value }))
+                      commit((current) => ({
+                        ...current,
+                        gutter: value,
+                        spacingVersion: BLOCK_SPACING_VERSION,
+                      }))
                     }
                     disabled={!canEdit}
                   />
@@ -2777,6 +2872,14 @@ export function NewspaperLayoutEditor({
                         disabled={!canEdit}
                       />
                     </div>
+                    {selectedWordTarget && (
+                      <div className="flex items-center justify-between rounded-md border bg-background px-2 py-1.5 text-xs">
+                        <span className="font-semibold">Block word target</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {selectedWordTarget} words
+                        </span>
+                      </div>
+                    )}
                     <div className="space-y-3 rounded-md border bg-background p-2">
                       <div className="flex items-center justify-between gap-2">
                         <div>
