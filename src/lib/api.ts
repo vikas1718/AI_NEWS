@@ -39,6 +39,7 @@ export interface Article {
   image_size: string | null;
   column_count: number | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface InstagramSlideContent {
@@ -88,6 +89,17 @@ export interface LayoutPlanItem {
   image_size: string;
   column_count: number;
   slot_index?: number;
+}
+
+export interface KannadaTtsResult {
+  audio_base64?: string;
+  audio_url?: string;
+  mime_type?: string;
+  file_name?: string;
+  model?: string;
+  text_length?: number;
+  chunk_count?: number;
+  simulated?: boolean;
 }
 
 export type ProcessArticleOptions = {
@@ -160,7 +172,8 @@ export const aiFn = {
   }) => callFn<SocialContentEdit>("edit-social-content", payload),
   layout: (articles: Article[], number_of_pages: number) =>
     callFn<{ layout: LayoutPlanItem[] }>("generate-layout", { articles, number_of_pages }),
-  tts: (text: string) => callFn<{ audio_url: string; simulated: boolean }>("tts-kannada", { text }),
+  tts: (text: string, options: { mode?: "fast" | "full" } = {}) =>
+    callFn<KannadaTtsResult>("tts-kannada", { text, mode: options.mode ?? "fast" }),
 };
 
 export const scheduleFn = {

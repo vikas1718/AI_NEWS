@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedTextToSpeechRouteImport } from './routes/_authenticated/text-to-speech'
 import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as AuthenticatedOrganizationSettingsRouteImport } from './routes/_authenticated/organization-settings'
@@ -41,6 +42,12 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedTextToSpeechRoute =
+  AuthenticatedTextToSpeechRouteImport.update({
+    id: '/text-to-speech',
+    path: '/text-to-speech',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
   id: '/team',
   path: '/team',
@@ -130,6 +137,7 @@ export interface FileRoutesByFullPath {
   '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/team': typeof AuthenticatedTeamRoute
+  '/text-to-speech': typeof AuthenticatedTextToSpeechRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/multiplatform/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
@@ -148,6 +156,7 @@ export interface FileRoutesByTo {
   '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/team': typeof AuthenticatedTeamRoute
+  '/text-to-speech': typeof AuthenticatedTextToSpeechRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/multiplatform/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
@@ -168,6 +177,7 @@ export interface FileRoutesById {
   '/_authenticated/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/team': typeof AuthenticatedTeamRoute
+  '/_authenticated/text-to-speech': typeof AuthenticatedTextToSpeechRoute
   '/_authenticated/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/_authenticated/multiplatform_/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/_authenticated/published/$id': typeof AuthenticatedPublishedIdRoute
@@ -188,6 +198,7 @@ export interface FileRouteTypes {
     | '/organization-settings'
     | '/settings'
     | '/team'
+    | '/text-to-speech'
     | '/editions/$id'
     | '/multiplatform/instagram'
     | '/published/$id'
@@ -206,6 +217,7 @@ export interface FileRouteTypes {
     | '/organization-settings'
     | '/settings'
     | '/team'
+    | '/text-to-speech'
     | '/editions/$id'
     | '/multiplatform/instagram'
     | '/published/$id'
@@ -225,6 +237,7 @@ export interface FileRouteTypes {
     | '/_authenticated/organization-settings'
     | '/_authenticated/settings'
     | '/_authenticated/team'
+    | '/_authenticated/text-to-speech'
     | '/_authenticated/editions/$id'
     | '/_authenticated/multiplatform_/instagram'
     | '/_authenticated/published/$id'
@@ -261,6 +274,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/text-to-speech': {
+      id: '/_authenticated/text-to-speech'
+      path: '/text-to-speech'
+      fullPath: '/text-to-speech'
+      preLoaderRoute: typeof AuthenticatedTextToSpeechRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/team': {
       id: '/_authenticated/team'
@@ -372,6 +392,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedOrganizationSettingsRoute: typeof AuthenticatedOrganizationSettingsRoute
   AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
   AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
+  AuthenticatedTextToSpeechRoute: typeof AuthenticatedTextToSpeechRoute
   AuthenticatedEditionsIdRoute: typeof AuthenticatedEditionsIdRoute
   AuthenticatedMultiplatformInstagramRoute: typeof AuthenticatedMultiplatformInstagramRoute
   AuthenticatedPublishedIdRoute: typeof AuthenticatedPublishedIdRoute
@@ -390,6 +411,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
     AuthenticatedOrganizationSettingsRoute,
   AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
   AuthenticatedTeamRoute: AuthenticatedTeamRoute,
+  AuthenticatedTextToSpeechRoute: AuthenticatedTextToSpeechRoute,
   AuthenticatedEditionsIdRoute: AuthenticatedEditionsIdRoute,
   AuthenticatedMultiplatformInstagramRoute:
     AuthenticatedMultiplatformInstagramRoute,

@@ -9,6 +9,7 @@ import {
   PanelLeftOpen,
   Settings,
   Share2,
+  Volume2,
   Users,
   X,
 } from "lucide-react";
@@ -26,7 +27,8 @@ type NavRoute =
   | "/team"
   | "/settings"
   | "/organization-settings"
-  | "/multiplatform/instagram";
+  | "/multiplatform/instagram"
+  | "/text-to-speech";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const ctx = useRouteContext({ from: "/_authenticated" });
@@ -46,6 +48,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: true },
     { to: "/editions", label: role === "editor" ? "My Editions" : "Editions", icon: Newspaper, show: true },
     { to: "/multiplatform/instagram", label: "Multiplatform", icon: Share2, show: true },
+    { to: "/text-to-speech", label: "Text-to-Speech (🔊)", icon: Volume2, show: true },
     { to: "/review", label: "Review Queue", icon: FileCheck2, show: role === "chief_editor" },
     { to: "/team", label: "Organization", icon: Users, show: true },
     { to: "/settings", label: "Profile", icon: Settings, show: true },
