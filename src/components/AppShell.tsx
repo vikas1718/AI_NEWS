@@ -10,7 +10,6 @@ import {
   Settings,
   Share2,
   Users,
-  Wand2,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -30,7 +29,6 @@ import { roleLabels } from "@/lib/rbac";
 type NavRoute =
   | "/dashboard"
   | "/editions"
-  | "/ai-generate-layout"
   | "/review"
   | "/team"
   | "/settings"
@@ -55,7 +53,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   }> = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: true },
     { to: "/editions", label: role === "editor" ? "My Editions" : "Editions", icon: Newspaper, show: true },
-    { to: "/ai-generate-layout", label: "AI Generate Layout", icon: Wand2, show: true },
     { to: "/multiplatform/instagram", label: "Multiplatform", icon: Share2, show: true },
     { to: "/review", label: "Review Queue", icon: FileCheck2, show: role === "chief_editor" },
     { to: "/team", label: "Organization", icon: Users, show: true },
@@ -93,7 +90,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return (
       <div
         className={cn(
-          "flex h-full shrink-0 flex-col bg-sidebar text-sidebar-foreground",
+          "flex h-full min-h-0 shrink-0 flex-col bg-sidebar text-sidebar-foreground",
           collapsed ? "w-20" : "w-64",
         )}
       >
@@ -130,7 +127,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
         )}
       </div>
-      <nav className={cn("flex-1 py-4", collapsed ? "px-3" : "px-2")}>
+      <nav className={cn("min-h-0 flex-1 overflow-hidden py-4", collapsed ? "px-3" : "px-2")}>
         {items.map((it) => {
           const active =
             pathname === it.to || (it.to !== "/dashboard" && pathname.startsWith(it.to));
@@ -219,10 +216,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen w-full overflow-hidden bg-background">
+    <div className="h-screen w-full overflow-hidden bg-background">
       <aside
         className={cn(
-          "hidden shrink-0 overflow-hidden border-r border-sidebar-border transition-[width] duration-300 ease-out md:block",
+          "fixed inset-y-0 left-0 z-40 hidden h-screen shrink-0 overflow-hidden border-r border-sidebar-border transition-[width] duration-300 ease-out md:block",
           sidebarOpen ? "w-64" : "w-20",
         )}
       >
@@ -246,7 +243,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         {renderSidebar(false)}
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-x-hidden transition-[margin,width] duration-300 ease-out">
+      <main
+        className={cn(
+          "h-screen min-w-0 overflow-y-auto overflow-x-hidden transition-[margin,width] duration-300 ease-out",
+          sidebarOpen ? "md:ml-64" : "md:ml-20",
+        )}
+      >
         <header className="sticky top-0 z-30 bg-background/92 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden">
           <div className="flex h-14 items-center gap-3 px-4 sm:px-6">
             <button

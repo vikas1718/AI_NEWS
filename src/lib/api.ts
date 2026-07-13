@@ -67,7 +67,7 @@ export interface ScheduledSlide {
 export interface ScheduledPost {
   id: string;
   platform: "instagram" | "twitter" | "facebook" | "whatsapp" | "inshorts";
-  status: "scheduled" | "cancelled";
+  status: "draft" | "submitted" | "under_review" | "approved" | "rejected" | "scheduled" | "published" | "cancelled" | "failed";
   scheduledAt: string;
   createdAt: string;
   updatedAt: string;
