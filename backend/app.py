@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import random
+import re
 import sys
 import traceback
 import traceback
@@ -20,7 +21,8 @@ from uuid import uuid4
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND_VERSION = "openai-images-ocr-2026-07-06"
+BACKEND_VERSION = "openai-tts-live-2026-07-13"
+OPENAI_TTS_URL = "https://api.openai.com/v1/audio/speech"
 SCHEDULED_POSTS_FILE = ROOT / "backend" / "data" / "scheduled_posts.json"
 SCHEDULED_POSTS_LOCK = Lock()
 SUPPORTED_SOCIAL_PLATFORMS = {"instagram", "twitter", "facebook", "whatsapp", "inshorts"}
@@ -37,6 +39,9 @@ VALID_CATEGORIES = {
 DEFAULT_TARGET_WORD_LIMIT = 250
 MIN_TARGET_WORD_LIMIT = 80
 MAX_TARGET_WORD_LIMIT = 1200
+TTS_FAST_CHAR_LIMIT = 1800
+TTS_FULL_CHAR_LIMIT = 24000
+TTS_CHUNK_CHAR_LIMIT = 3600
 
 MOCK_KANNADA = [
     "\u0cac\u0cc6\u0c82\u0c97\u0cb3\u0cc2\u0cb0\u0cc1: \u0cb0\u0cbe\u0c9c\u0ccd\u0caf\u0ca6\u0cb2\u0ccd\u0cb2\u0cbf \u0c87\u0c82\u0ca6\u0cc1 \u0cad\u0cbe\u0cb0\u0cc0 \u0cae\u0cb3\u0cc6 \u0cb8\u0cc1\u0cb0\u0cbf\u0caf\u0cc1\u0ca4\u0ccd\u0ca4\u0cbf\u0ca6\u0cc6.",
@@ -1179,12 +1184,108 @@ def handle_generate_instagram_content(payload: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def normalize_tts_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    cleaned = re.sub(r"\s+([,.!?;:।])", r"\1", cleaned)
+    return cleaned
+
+
+def split_tts_chunks(text: str, limit: int = TTS_CHUNK_CHAR_LIMIT) -> list[str]:
+    cleaned = normalize_tts_text(text)
+    if len(cleaned) <= limit:
+        return [cleaned] if cleaned else []
+
+    parts = [part.strip() for part in re.split(r"(?<=[.!?।])\s+", cleaned) if part.strip()]
+    chunks: list[str] = []
+    current = ""
+    for part in parts:
+        if len(part) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(part[index : index + limit] for index in range(0, len(part), limit))
+            continue
+        candidate = f"{current} {part}".strip()
+        if len(candidate) <= limit:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = part
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def openai_tts_request(text: str) -> bytes:
+    api_key = get_openai_key()
+    if not api_key:
+        raise RuntimeError("ai_failed: OPENAI_API_KEY is missing in backend .env")
+
+    payload = {
+        "model": env_value("OPENAI_TTS_MODEL") or "gpt-4o-mini-tts",
+        "voice": env_value("OPENAI_TTS_VOICE") or "alloy",
+        "input": text,
+        "response_format": "mp3",
+        "speed": 0.98,
+        "instructions": (
+            "Read this as standard Kannada broadcast news. Use natural, clear pronunciation, "
+            "professional newsroom pacing, accurate pauses after punctuation, smooth intonation, "
+            "and avoid a dramatic or conversational style."
+        ),
+    }
+    request = urllib.request.Request(
+        OPENAI_TTS_URL,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 401:
+            raise RuntimeError("ai_failed: OpenAI API key was rejected") from exc
+        if exc.code == 402:
+            raise RuntimeError("credits_exhausted") from exc
+        if exc.code == 429:
+            raise RuntimeError("rate_limited") from exc
+        raise RuntimeError(f"ai_failed: OpenAI TTS returned {exc.code}: {body or exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"ai_failed: OpenAI TTS network failed: {exc.reason}") from exc
+
+
 def handle_tts(payload: dict[str, Any]) -> dict[str, Any]:
-    text = str(payload.get("text") or "")
+    mode = str(payload.get("mode") or "fast").lower()
+    raw_text = normalize_tts_text(str(payload.get("text") or ""))
+    if not raw_text:
+        raise ValueError("Text is required for Kannada TTS")
+
+    max_length = TTS_FULL_CHAR_LIMIT if mode == "full" else TTS_FAST_CHAR_LIMIT
+    text = raw_text[:max_length]
+    chunks = split_tts_chunks(text)
+    if not chunks:
+        raise ValueError("Text is required for Kannada TTS")
+
+    audio_parts = [openai_tts_request(chunk) for chunk in chunks]
+    audio_bytes = b"".join(audio_parts)
+    if not audio_bytes:
+        raise RuntimeError("ai_failed: OpenAI TTS did not return audio data")
+
     return {
-        "audio_url": "https://actions.google.com/sounds/v1/ambiences/newspaper_being_folded.ogg",
-        "simulated": True,
+        "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+        "mime_type": "audio/mpeg",
+        "file_name": f"kannada-news-tts-{datetime.now().strftime('%Y%m%d-%H%M%S')}.mp3",
+        "model": env_value("OPENAI_TTS_MODEL") or "gpt-4o-mini-tts",
         "text_length": len(text),
+        "chunk_count": len(chunks),
+        "simulated": False,
+        "backend_version": BACKEND_VERSION,
     }
 
 
@@ -1348,6 +1449,8 @@ class BackendHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             json_response(self, {"error": str(exc)}, 400)
         except RuntimeError as exc:
+            stack = traceback.format_exc()
+            print(stack, file=sys.stderr)
             message = str(exc)
             status = 500
             if message == "rate_limited":
@@ -1356,7 +1459,9 @@ class BackendHandler(BaseHTTPRequestHandler):
                 status = 402
             json_response(self, {"success": False, "error": message, "stack": stack}, status)
         except Exception as exc:
-            json_response(self, {"error": str(exc)}, 500)
+            stack = traceback.format_exc()
+            print(stack, file=sys.stderr)
+            json_response(self, {"success": False, "error": str(exc), "stack": stack}, 500)
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))

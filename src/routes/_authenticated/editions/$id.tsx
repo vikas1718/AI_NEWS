@@ -1,4 +1,10 @@
-import { createFileRoute, Link, redirect, useNavigate, useRouteContext } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  redirect,
+  useNavigate,
+  useRouteContext,
+} from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
@@ -358,6 +364,10 @@ function EditionWorkspace() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"articles" | "layout" | "preview">("articles");
 
+  useEffect(() => {
+    window.localStorage.setItem("ai-news-active-edition-id", id);
+  }, [id]);
+
   const { data: newspaper } = useQuery({
     queryKey: ["newspaper", id, organizationId],
     enabled: Boolean(organizationId),
@@ -550,7 +560,10 @@ function EditionWorkspace() {
       const { error: layoutError } = await supabase.from("layouts").delete().eq("newspaper_id", id);
       if (layoutError) throw layoutError;
 
-      const { error: articleError } = await supabase.from("articles").delete().eq("newspaper_id", id);
+      const { error: articleError } = await supabase
+        .from("articles")
+        .delete()
+        .eq("newspaper_id", id);
       if (articleError) throw articleError;
 
       const { error } = await supabase
@@ -655,7 +668,9 @@ function EditionWorkspace() {
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel disabled={deleteNewspaper.isPending}>Cancel</AlertDialogCancel>
+                    <AlertDialogCancel disabled={deleteNewspaper.isPending}>
+                      Cancel
+                    </AlertDialogCancel>
                     <AlertDialogAction
                       onClick={() => deleteNewspaper.mutate()}
                       disabled={deleteNewspaper.isPending}
