@@ -94,41 +94,30 @@ function Dashboard() {
 
       <InvitationsPanel compact />
 
-      {ctx.organizations.length > 0 && (
+      {ctx.organization && ctx.membership && (
         <div>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Organizations</h2>
+            <h2 className="text-lg font-semibold">Organization workspace</h2>
             {canManageTeam && (
               <Link to="/team" className="text-sm text-primary hover:underline">
                 Manage
               </Link>
             )}
           </div>
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {ctx.organizations.map((item) => {
-              const active = item.organization.id === ctx.organization?.id;
-              return (
-                <Link
-                  key={item.organization.id}
-                  to="/team"
-                  className={`rounded-lg border bg-card p-4 transition hover:border-primary/40 ${
-                    active ? "border-primary/60 ring-1 ring-primary/20" : ""
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <Building2 className="mt-0.5 h-5 w-5 text-primary" />
-                    <div className="min-w-0">
-                      <div className="truncate font-semibold">{item.organization.name}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {roleLabels[item.membership.role]}
-                        {active ? " - Active workspace" : ""}
-                      </div>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
+          <Link
+            to="/team"
+            className="block rounded-lg border border-primary/60 bg-card p-4 ring-1 ring-primary/20 transition hover:border-primary"
+          >
+            <div className="flex items-start gap-3">
+              <Building2 className="mt-0.5 h-5 w-5 text-primary" />
+              <div className="min-w-0">
+                <div className="truncate font-semibold">{ctx.organization.name}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {roleLabels[ctx.membership.role]} - Single account workspace
+                </div>
+              </div>
+            </div>
+          </Link>
         </div>
       )}
 

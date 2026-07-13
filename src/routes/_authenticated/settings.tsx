@@ -3,8 +3,6 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   AlertTriangle,
   Building2,
-  Check,
-  Crown,
   Eye,
   EyeOff,
   LockKeyhole,
@@ -163,13 +161,6 @@ function SettingsPage() {
     }
   }
 
-  async function switchOrganization(organizationId: string) {
-    window.localStorage.setItem("ai-news-active-organization-id", organizationId);
-    await router.invalidate();
-    toast.success("Organization switched.");
-    navigate({ to: "/dashboard" });
-  }
-
   async function deleteAccount() {
     setDeletingAccount(true);
     try {
@@ -313,63 +304,23 @@ function SettingsPage() {
                 Organization
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                Switch between organizations. Your access follows your role in the selected
-                workspace.
+                This account is tied to one organization workspace. Use a different account for a
+                different organization.
               </p>
             </div>
-            {ctx.organizations.length > 0 ? (
-              <div className="mt-4 space-y-2">
-                {ctx.organizations.map((item) => {
-                  const active = item.organization.id === organization?.id;
-                  const isOwner = item.membership.role === "owner";
-
-                  return (
-                    <button
-                      key={item.organization.id}
-                      type="button"
-                      onClick={() => void switchOrganization(item.organization.id)}
-                      disabled={active}
-                      className={`flex w-full items-center gap-3 rounded-lg border p-3 text-left transition ${
-                        active
-                          ? "border-primary bg-primary/10 text-foreground"
-                          : "bg-background hover:border-primary/50 hover:bg-accent/40"
-                      }`}
-                    >
-                      <span
-                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
-                          active ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
-                        }`}
-                      >
-                        <Building2 className="h-5 w-5" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2">
-                          <span className="truncate font-semibold">{item.organization.name}</span>
-                          {isOwner && (
-                            <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold uppercase text-amber-600">
-                              <Crown className="h-3 w-3" />
-                              Owner/Admin
-                            </span>
-                          )}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          {active
-                            ? "Active organization"
-                            : `Switch as ${roleLabels[item.membership.role]}`}
-                        </span>
-                      </span>
-                      {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                    </button>
-                  );
-                })}
-                {organization && membership && (
-                  <div className="pt-2 text-xs text-muted-foreground">
-                    Current role: {roleLabels[membership.role]}.{" "}
-                    {membership.role === "owner"
-                      ? "You have full owner/admin privileges here."
-                      : "Owner/Admin organization settings and team controls are restricted here."}
-                  </div>
-                )}
+            {organization && membership ? (
+              <div className="mt-4 rounded-lg border border-primary bg-primary/10 p-3">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                    <Building2 className="h-5 w-5" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">{organization.name}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      Current role: {roleLabels[membership.role]}
+                    </span>
+                  </span>
+                </div>
               </div>
             ) : (
               <p className="mt-3 text-sm text-muted-foreground">
@@ -404,7 +355,7 @@ function SettingsPage() {
                   <AlertDialogTitle>Leave {organization?.name ?? "organization"}?</AlertDialogTitle>
                   <AlertDialogDescription>
                     Your membership will be removed immediately. You can still sign in, but
-                    organization pages will be restricted until you create or join another team.
+                    organization pages will be restricted until an owner gives this account access again.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

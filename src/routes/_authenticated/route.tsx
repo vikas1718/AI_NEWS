@@ -83,11 +83,8 @@ export const Route = createFileRoute("/_authenticated")({
         return a.membership.joined_at.localeCompare(b.membership.joined_at);
       });
 
-    const storedOrganizationId = getStoredActiveOrganizationId();
-    const selectedOrganization =
-      organizations.find((item) => item.organization.id === storedOrganizationId) ??
-      organizations[0] ??
-      null;
+    const selectedOrganization = organizations[0] ?? null;
+    const activeOrganizations = selectedOrganization ? [selectedOrganization] : [];
     const membership = selectedOrganization?.membership ?? null;
     const organization = selectedOrganization?.organization ?? null;
     const role = membership?.role ?? null;
@@ -102,7 +99,9 @@ export const Route = createFileRoute("/_authenticated")({
         ? permissionRows.map((row: { permission_key: PermissionKey }) => row.permission_key)
         : getPermissionsForRole(role);
 
-    const pendingInvitationCount = await getDatabasePendingInvitationCount(db, user.email ?? null);
+    const pendingInvitationCount = organization
+      ? 0
+      : await getDatabasePendingInvitationCount(db, user.email ?? null);
 
     const pathname = location.pathname;
     const isOnboarding = pathname === "/onboarding";
@@ -111,7 +110,7 @@ export const Route = createFileRoute("/_authenticated")({
     return {
       user,
       profile: profile ?? null,
-      organizations,
+      organizations: activeOrganizations,
       organization,
       membership,
       role,
@@ -121,11 +120,6 @@ export const Route = createFileRoute("/_authenticated")({
   },
   component: AuthenticatedLayout,
 });
-
-function getStoredActiveOrganizationId() {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem("ai-news-active-organization-id");
-}
 
 function isMissingOrganizationSchemaError(error: unknown) {
   if (!error || typeof error !== "object" || !("message" in error)) return false;

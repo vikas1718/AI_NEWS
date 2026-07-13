@@ -12,7 +12,6 @@ import {
   ImageIcon,
   Loader2,
   Paperclip,
-  ScanLine,
   Sparkles,
   Wand2,
   X,
@@ -26,7 +25,7 @@ interface Props {
 
 type AttachedFile = {
   file: File;
-  sourceType: "image" | "pdf" | "scan";
+  sourceType: "image" | "pdf";
   previewUrl: string | null;
 };
 
@@ -37,7 +36,7 @@ type UploadedFileInfo = {
 };
 
 const ARTICLE_PLACEHOLDER =
-  "Write or paste article text here. You can also attach an image, PDF, or scanned document.";
+  "Write or paste article text here. You can also attach an image or PDF.";
 const DEFAULT_TARGET_WORD_LIMIT = 250;
 const MIN_TARGET_WORD_LIMIT = 80;
 const MAX_TARGET_WORD_LIMIT = 1200;
@@ -50,8 +49,7 @@ function normalizeTargetWordLimit(value: number) {
 
 function getAttachmentLabel(sourceType: AttachedFile["sourceType"]) {
   if (sourceType === "image") return "Image";
-  if (sourceType === "pdf") return "PDF";
-  return "Scan";
+  return "PDF";
 }
 
 export function AddArticleFlow({ newspaperId, onCreated }: Props) {
@@ -90,7 +88,7 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
     mutationFn: async () => {
       const typedText = rawText.trim();
       if (!typedText && !attachedFile) {
-        throw new Error("Paste text or attach an image, PDF, or scan first");
+        throw new Error("Paste text or attach an image or PDF first");
       }
 
       setGenerating(true);
@@ -285,13 +283,6 @@ export function AddArticleFlow({ newspaperId, onCreated }: Props) {
               accept="application/pdf"
               disabled={busy}
               onFile={(file) => attachFile(file, "pdf")}
-            />
-            <AttachButton
-              label="Attach scan"
-              icon={ScanLine}
-              accept="image/*,application/pdf"
-              disabled={busy}
-              onFile={(file) => attachFile(file, "scan")}
             />
           </div>
         </div>

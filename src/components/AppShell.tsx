@@ -1,4 +1,4 @@
-import { Link, useNavigate, useRouteContext, useRouter, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouteContext, useRouterState } from "@tanstack/react-router";
 import {
   FileCheck2,
   LayoutDashboard,
@@ -16,13 +16,6 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 import { supabase } from "@/integrations/supabase/client";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { roleLabels } from "@/lib/rbac";
 
@@ -40,7 +33,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const role = ctx.role;
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const navigate = useNavigate();
-  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const isEditionWorkspace = pathname.startsWith("/editions/");
@@ -72,19 +64,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     setSidebarOpen((open) => !open);
   }
 
-  async function switchOrganization(organizationId: string) {
-    window.localStorage.setItem("ai-news-active-organization-id", organizationId);
-    await router.invalidate();
-    navigate({ to: "/dashboard" });
-  }
-
   useEffect(() => {
     setMobileSidebarOpen(false);
   }, [pathname]);
 
   const roleLabel = ctx.role ? roleLabels[ctx.role] : "Create workspace";
   const organizationName = ctx.organization?.name ?? "Set up team";
-  const activeOrganizationId = ctx.organization?.id;
 
   function renderSidebar(collapsed = false) {
     return (
@@ -177,24 +162,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {!collapsed && (
           <div className="mb-2 px-2">
             <div className="truncate font-medium">{ctx.user.email}</div>
-            {ctx.organizations.length > 1 && activeOrganizationId ? (
-              <div className="mt-2">
-                <Select value={activeOrganizationId} onValueChange={(value) => void switchOrganization(value)}>
-                  <SelectTrigger className="h-8 border-sidebar-border/70 bg-sidebar-accent/30 text-xs text-sidebar-foreground">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ctx.organizations.map((item) => (
-                      <SelectItem key={item.organization.id} value={item.organization.id}>
-                        {item.organization.name} - {roleLabels[item.membership.role]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <div className="truncate text-sidebar-foreground/60">{organizationName}</div>
-            )}
+            <div className="truncate text-sidebar-foreground/60">{organizationName}</div>
             <div className="mt-1 text-sidebar-foreground/60">{roleLabel}</div>
           </div>
         )}

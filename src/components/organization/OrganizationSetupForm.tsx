@@ -23,7 +23,7 @@ export function OrganizationSetupForm({
   submitLabel = "Create organization",
   successMessage = "Organization created. You are now the Owner/Admin.",
 }: OrganizationSetupFormProps) {
-  const { user } = useRouteContext({ from: "/_authenticated" });
+  const { user, organization } = useRouteContext({ from: "/_authenticated" });
   const navigate = useNavigate();
   const router = useRouter();
   const db = supabaseUntyped;
@@ -39,6 +39,12 @@ export function OrganizationSetupForm({
 
   async function createOrganization(e: FormEvent) {
     e.preventDefault();
+    if (organization) {
+      toast.info("This account already has an organization workspace.");
+      navigate({ to: "/dashboard" });
+      return;
+    }
+
     const name = form.name.trim();
     if (!name) {
       toast.error("Organization name is required");
@@ -67,7 +73,7 @@ export function OrganizationSetupForm({
       });
 
       if (organizationId) {
-        window.localStorage.setItem("ai-news-active-organization-id", String(organizationId));
+        window.localStorage.removeItem("ai-news-active-organization-id");
       }
 
       console.info("[Invitations][organization:create]", {
@@ -182,6 +188,17 @@ async function createOrganizationInDatabase(input: {
 
   if (!rpcResult.error) return String(rpcResult.data);
   if (!isMissingCreateOrganizationFunction(rpcResult.error)) throw rpcResult.error;
+
+  const { data: existingMembership, error: existingMembershipError } = await supabaseUntyped
+    .from("organization_members")
+    .select("organization_id")
+    .eq("user_id", input.userId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (existingMembershipError) throw existingMembershipError;
+  if (existingMembership?.organization_id) {
+    throw new Error("This account already has an organization workspace.");
+  }
 
   const { data: organization, error: organizationError } = await supabaseUntyped
     .from("organizations")

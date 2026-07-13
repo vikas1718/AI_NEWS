@@ -19,7 +19,7 @@ function About() {
 
       <div className="grid gap-3 md:grid-cols-5">
         {[
-          { icon: UserRound, title: "Editor", desc: "Uploads raw text / image / PDF / scan." },
+          { icon: UserRound, title: "Editor", desc: "Uploads raw text, images, or PDFs." },
           {
             icon: Sparkles,
             title: "AI Pipeline",
@@ -59,7 +59,7 @@ function About() {
             <div className="text-sm font-semibold">Editor</div>
             <ul className="mt-1 list-inside list-disc text-sm text-muted-foreground">
               <li>Creates newspaper editions</li>
-              <li>Adds articles (text / OCR image / PDF / scan)</li>
+              <li>Adds articles from text, OCR image, or PDF sources</li>
               <li>Runs the AI pipeline</li>
               <li>Tweaks layout, sends to Chief Editor</li>
             </ul>

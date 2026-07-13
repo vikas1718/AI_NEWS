@@ -19,7 +19,7 @@ type Invitation = {
 };
 
 export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
-  const { user } = useRouteContext({ from: "/_authenticated" });
+  const { user, organization } = useRouteContext({ from: "/_authenticated" });
   const db = supabaseUntyped;
   const qc = useQueryClient();
   const router = useRouter();
@@ -27,20 +27,32 @@ export function InvitationsPanel({ compact = false }: { compact?: boolean }) {
 
   const { data: invitations = [], isLoading } = useQuery({
     queryKey: ["organization-invitations", user.id],
+    enabled: !organization,
     queryFn: async () => {
       return getDatabasePendingInvitations(db, user.email ?? null);
     },
   });
 
+  if (organization) {
+    if (compact) return null;
+    return (
+      <Card className="rounded-lg border-dashed p-6 text-center">
+        <Building2 className="mx-auto h-6 w-6 text-muted-foreground" />
+        <div className="mt-3 font-semibold">Single workspace active</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          This account already belongs to an organization. Use a different account for a different workspace.
+        </p>
+      </Card>
+    );
+  }
+
   const accept = useMutation({
     mutationFn: async (invitation: Invitation) => {
-      const { data: organizationId, error } = await db.rpc("accept_organization_invitation", {
+      const { error } = await db.rpc("accept_organization_invitation", {
         p_invitation_id: invitation.id,
       });
       if (error) throw error;
-      if (organizationId) {
-        window.localStorage.setItem("ai-news-active-organization-id", String(organizationId));
-      }
+      window.localStorage.removeItem("ai-news-active-organization-id");
     },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["organization-invitations"] });
