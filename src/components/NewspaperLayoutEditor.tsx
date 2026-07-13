@@ -448,7 +448,7 @@ function createInitialState(template: LayoutTemplateDef, articles: Article[]): L
     .filter((article) => !article.page_number || article.page_number === 1)
     .sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0));
 
-  template.slots.forEach((slot, index) => {
+  articleSlotsFor(template).forEach((slot, index) => {
     const article =
       pageOneArticles[index] ?? articles.find((candidate) => !assignedArticleIds.has(candidate.id));
     if (article) {
@@ -471,7 +471,7 @@ function createInitialState(template: LayoutTemplateDef, articles: Article[]): L
 }
 
 function articleSlotsFor(template: LayoutTemplateDef) {
-  return template.slots;
+  return template.slots.filter((slot) => slot.kind !== "ad");
 }
 
 function templateCapacity(template: LayoutTemplateDef) {
@@ -515,12 +515,10 @@ function createPageState(
     (pageNumber - 1) * articleSlots.length,
     pageNumber * articleSlots.length,
   );
-  let articleIndex = 0;
 
-  template.slots.forEach((slot) => {
+  articleSlots.forEach((slot, articleIndex) => {
     const article = pageArticles[articleIndex];
     if (article) assignments[slot.id] = { articleId: article.id };
-    articleIndex += 1;
   });
 
   return {
@@ -549,6 +547,8 @@ function applyTemplateToPage(pageState: LayoutState, template: LayoutTemplateDef
       return;
     }
 
+    if (slot.kind === "ad") return;
+
     const assignment = existingStoryAssignments[storyIndex];
     if (assignment) assignments[slot.id] = assignment;
     storyIndex += 1;
@@ -568,56 +568,6 @@ function createPagedStates(template: LayoutTemplateDef, articles: Article[]) {
   return {
     1: createPageState(template, articles, 1),
   } as Record<number, LayoutState>;
-}
-
-export function createGeneratedEditorLayout(articles: Article[], numberOfPages: number) {
-  const sortedArticles = [...articles].sort(
-    (a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0),
-  );
-  const maxTemplateCapacity = Math.max(...TEMPLATE_DEFS.map(templateCapacity), 1);
-  const pageCount = Math.max(
-    1,
-    numberOfPages,
-    Math.ceil(sortedArticles.length / maxTemplateCapacity),
-  );
-  const articleById = new Map(sortedArticles.map((article) => [article.id, article]));
-  const pages: Record<number, LayoutState> = {};
-  let articleIndex = 0;
-
-  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-    const remainingArticles = Math.max(0, sortedArticles.length - articleIndex);
-    const remainingPages = Math.max(1, pageCount - pageNumber + 1);
-    const pageArticleTarget = Math.ceil(remainingArticles / remainingPages);
-    const template = chooseTemplateForArticleCount(Math.max(1, pageArticleTarget));
-    const assignments: Record<string, SlotAssignment> = {};
-    const slots = cloneSlots(template.slots);
-
-    for (const slot of slots) {
-      const article = sortedArticles[articleIndex];
-      if (!article) break;
-      assignments[slot.id] = { articleId: article.id };
-      articleIndex += 1;
-    }
-
-    pages[pageNumber] = autoFitArticleSpace(
-      {
-        templateId: template.id,
-        slots: slots.map((slot) => (assignments[slot.id]?.articleId ? asArticleSlot(slot) : slot)),
-        assignments,
-        rowScale: 100,
-        columnScale: 100,
-        gutter: 8,
-        headerQuote: pageNumber === 1 ? DEFAULT_HEADER_QUOTE : undefined,
-      },
-      articleById,
-    );
-  }
-
-  return {
-    active_page: 1,
-    pages,
-    saved_at: new Date().toISOString(),
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1860,8 +1810,7 @@ export function NewspaperLayoutEditor({
   const previewBaseScale = previewMode === "mobile" ? 0.56 : previewMode === "pdf" ? 0.9 : 0.76;
   const canvasScale = previewBaseScale * (pageZoom / 100);
   const headerAdAssignment =
-    state.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID] ??
-    emptyAdAssignment(FRONT_PAGE_HEADER_AD_SLOT);
+    state.assignments[FRONT_PAGE_HEADER_AD_SLOT_ID] ?? emptyAdAssignment(FRONT_PAGE_HEADER_AD_SLOT);
 
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>

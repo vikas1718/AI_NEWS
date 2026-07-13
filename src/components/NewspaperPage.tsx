@@ -214,7 +214,6 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
               {lead.image_url && (
                 <div className="col-span-3">
                   <img src={lead.image_url} alt="" className="h-36 w-full object-cover" />
-                  <div className="text-[9px] italic opacity-70">Photo caption</div>
                 </div>
               )}
               <div

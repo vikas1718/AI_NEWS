@@ -228,7 +228,7 @@ const solutions: IconCard[] = [
   {
     icon: Building2,
     title: "Newspaper Organizations",
-    body: "Unify article creation, OCR, layout generation, approvals, and publication planning.",
+    body: "Unify article creation, OCR, manual layout editing, approvals, and publication planning.",
   },
   {
     icon: Newspaper,

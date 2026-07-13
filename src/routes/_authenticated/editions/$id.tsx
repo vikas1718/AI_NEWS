@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
-  Layout as LayoutIcon,
   Loader2,
   MessageSquareText,
   Send,
@@ -15,10 +14,7 @@ import {
 import { toast } from "sonner";
 import { AddArticleFlow } from "@/components/AddArticleFlow";
 import { ArticleCard } from "@/components/ArticleCard";
-import {
-  createGeneratedEditorLayout,
-  NewspaperLayoutEditor,
-} from "@/components/NewspaperLayoutEditor";
+import { NewspaperLayoutEditor } from "@/components/NewspaperLayoutEditor";
 import { Card } from "@/components/ui/card";
 import { getPrintPageCount, NewspaperPage } from "@/components/NewspaperPage";
 import {
@@ -53,13 +49,6 @@ export const Route = createFileRoute("/_authenticated/editions/$id")({
   },
   component: EditionWorkspace,
 });
-
-type SavedPlacement = {
-  articleId: string;
-  pageNumber: number;
-  slotKind: string;
-  slotWidth: number;
-};
 
 type PageTurnPreviewProps = {
   newspaper: Newspaper;
@@ -96,35 +85,6 @@ function getReviewCommentLabel(reviewComment: ReviewComment, articles: Article[]
   }
 
   return "General";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function savedEditorPlacements(layoutJson: unknown): SavedPlacement[] {
-  if (!isRecord(layoutJson) || !isRecord(layoutJson.pages)) return [];
-
-  const placements: SavedPlacement[] = [];
-  for (const [pageNumber, pageState] of Object.entries(layoutJson.pages)) {
-    if (!isRecord(pageState) || !Array.isArray(pageState.slots) || !isRecord(pageState.assignments))
-      continue;
-
-    for (const slot of pageState.slots) {
-      if (!isRecord(slot) || typeof slot.id !== "string") continue;
-      const assignment = pageState.assignments[slot.id];
-      if (!isRecord(assignment) || typeof assignment.articleId !== "string") continue;
-
-      placements.push({
-        articleId: assignment.articleId,
-        pageNumber: Number(pageNumber),
-        slotKind: typeof slot.kind === "string" ? slot.kind : "story",
-        slotWidth: typeof slot.w === "number" ? slot.w : 4,
-      });
-    }
-  }
-
-  return placements;
 }
 
 function PageTurnPreview({
@@ -418,116 +378,6 @@ function EditionWorkspace() {
     },
   });
 
-  const genLayout = useMutation({
-    mutationFn: async () => {
-      if (!newspaper) return;
-      const ready = articles.filter((article) => article.workflow_status?.ready_for_layout);
-      if (ready.length === 0)
-        throw new Error("Mark image step complete on at least one article first.");
-
-      const { data: savedLayout, error: savedLayoutError } = await supabase
-        .from("layouts")
-        .select("layout_json")
-        .eq("newspaper_id", id)
-        .order("generated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (savedLayoutError) throw savedLayoutError;
-
-      const savedPlacements = savedEditorPlacements(savedLayout?.layout_json);
-      if (savedPlacements.length > 0) {
-        let priority = 100;
-        const placedArticleIds = new Set(savedPlacements.map((placement) => placement.articleId));
-
-        for (const placement of savedPlacements) {
-          const { error } = await supabase
-            .from("articles")
-            .update({
-              page_number: placement.pageNumber,
-              position: placement.slotKind === "lead" ? "top" : "body",
-              headline_size:
-                placement.slotKind === "lead"
-                  ? "big"
-                  : placement.slotWidth >= 6
-                    ? "medium"
-                    : "small",
-              image_size:
-                placement.slotKind === "image" || placement.slotKind === "lead" ? "large" : "small",
-              column_count: Math.min(3, Math.max(1, Math.floor(placement.slotWidth / 4))),
-              priority_score: priority,
-            })
-            .eq("id", placement.articleId)
-            .eq("newspaper_id", id);
-          if (error) throw error;
-          priority -= 1;
-        }
-
-        const unplacedArticleIds = articles
-          .map((article) => article.id)
-          .filter((articleId) => !placedArticleIds.has(articleId));
-        if (unplacedArticleIds.length > 0) {
-          const { error } = await supabase
-            .from("articles")
-            .update({
-              page_number: null,
-              position: null,
-              headline_size: null,
-              image_size: null,
-              column_count: null,
-            })
-            .in("id", unplacedArticleIds)
-            .eq("newspaper_id", id);
-          if (error) throw error;
-        }
-
-        await supabase
-          .from("newspapers")
-          .update({ status: "pending_layout" })
-          .eq("id", id)
-          .eq("organization_id", organizationId!);
-        return "saved";
-      }
-
-      const layoutJson = createGeneratedEditorLayout(ready, newspaper.number_of_pages);
-      const generatedPlacements = savedEditorPlacements(layoutJson);
-      let priority = 100;
-
-      for (const placement of generatedPlacements) {
-        const { error } = await supabase
-          .from("articles")
-          .update({
-            page_number: placement.pageNumber,
-            position: placement.slotKind === "lead" ? "top" : "body",
-            headline_size:
-              placement.slotKind === "lead" ? "big" : placement.slotWidth >= 6 ? "medium" : "small",
-            image_size:
-              placement.slotKind === "image" || placement.slotKind === "lead" ? "large" : "small",
-            column_count: Math.min(3, Math.max(1, Math.floor(placement.slotWidth / 4))),
-            priority_score: priority,
-          })
-          .eq("id", placement.articleId)
-          .eq("newspaper_id", id);
-        if (error) throw error;
-        priority -= 1;
-      }
-      await supabase.from("layouts").insert({ newspaper_id: id, layout_json: layoutJson });
-      await supabase
-        .from("newspapers")
-        .update({ status: "pending_layout" })
-        .eq("id", id)
-        .eq("organization_id", organizationId!);
-      return "generated";
-    },
-    onSuccess: (source) => {
-      queryClient.invalidateQueries();
-      queryClient.invalidateQueries({ queryKey: ["saved-layout", id] });
-      toast.success(source === "saved" ? "Saved editor layout loaded" : "Layout generated");
-      setTab("layout");
-    },
-    onError: (error: unknown) =>
-      toast.error(error instanceof Error ? error.message : "Layout generation failed"),
-  });
-
   const sendChief = useMutation({
     mutationFn: async () => {
       const { error } = await supabase
@@ -547,18 +397,11 @@ function EditionWorkspace() {
 
   const deleteNewspaper = useMutation({
     mutationFn: async () => {
-      const { error: layoutError } = await supabase.from("layouts").delete().eq("newspaper_id", id);
-      if (layoutError) throw layoutError;
-
-      const { error: articleError } = await supabase.from("articles").delete().eq("newspaper_id", id);
-      if (articleError) throw articleError;
-
-      const { error } = await supabase
-        .from("newspapers")
-        .delete()
-        .eq("id", id)
-        .eq("organization_id", organizationId!);
+      const { data, error } = await supabaseUntyped.rpc("delete_newspaper_edition", {
+        p_newspaper_id: id,
+      });
       if (error) throw error;
+      if (!data) throw new Error("Edition was not deleted. Please refresh and try again.");
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ["newspapers", organizationId] });
@@ -586,11 +429,12 @@ function EditionWorkspace() {
   const canEdit =
     hasPermission(ctx.permissions, "edit_articles") &&
     !["pending_approval", "approved", "published"].includes(newspaper.status);
-  const canGenerateLayout = canEdit && hasPermission(ctx.permissions, "access_layout_generation");
   const canSendForReview =
     canEdit && (hasPermission(ctx.permissions, "submit_for_review") || ctx.role === "editor");
   const canDeleteNewspaper =
-    ctx.role === "owner" || hasPermission(ctx.permissions, "delete_newspapers");
+    ctx.role === "owner" ||
+    ctx.role === "editor" ||
+    hasPermission(ctx.permissions, "delete_newspapers");
   const approvalPending = newspaper.status === "pending_approval";
 
   return (
@@ -614,20 +458,6 @@ function EditionWorkspace() {
             </div>
           </div>
           <div className="flex gap-2">
-            {canGenerateLayout && (
-              <Button
-                variant="outline"
-                onClick={() => genLayout.mutate()}
-                disabled={genLayout.isPending}
-              >
-                {genLayout.isPending ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <LayoutIcon className="mr-2 h-4 w-4" />
-                )}
-                Generate layout
-              </Button>
-            )}
             {canSendForReview && laidOut.length > 0 && (
               <Button onClick={() => sendChief.mutate()} disabled={sendChief.isPending}>
                 <Send className="mr-2 h-4 w-4" />
@@ -759,7 +589,7 @@ function EditionWorkspace() {
         <TabsContent value="preview" className="mt-4 space-y-6">
           {laidOut.length === 0 && !hasSavedPreview ? (
             <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-              No layout yet. Click <b>Generate layout</b> above.
+              No layout yet. Open the layout editor tab and place articles manually.
             </div>
           ) : (
             <PageTurnPreview

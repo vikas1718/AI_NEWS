@@ -80,16 +80,6 @@ type ImageArticlePayload = Partial<Article> & {
 
 type JsonObject = Record<string, unknown>;
 
-export interface LayoutPlanItem {
-  article_id: string;
-  page_number: number;
-  position: string;
-  headline_size: string;
-  image_size: string;
-  column_count: number;
-  slot_index?: number;
-}
-
 export type ProcessArticleOptions = {
   targetWordLimit?: number;
 };
@@ -158,8 +148,6 @@ export const aiFn = {
     instructions: string;
     article: Partial<Article> | null;
   }) => callFn<SocialContentEdit>("edit-social-content", payload),
-  layout: (articles: Article[], number_of_pages: number) =>
-    callFn<{ layout: LayoutPlanItem[] }>("generate-layout", { articles, number_of_pages }),
   tts: (text: string) => callFn<{ audio_url: string; simulated: boolean }>("tts-kannada", { text }),
 };
 

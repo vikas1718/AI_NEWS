@@ -10,13 +10,13 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "AI News Studio is an enterprise AI newsroom platform for news generation, OCR, editing, layout creation, social publishing, translation, and secure editorial collaboration.",
+          "AI News Studio is an enterprise AI newsroom platform for news generation, OCR, editing, social publishing, translation, and secure editorial collaboration.",
       },
       { property: "og:title", content: "AI News Studio - AI-Powered Newsrooms" },
       {
         property: "og:description",
         content:
-          "Create articles, extract scanned content, generate layouts and visuals, and manage newsroom workflows with AI.",
+          "Create articles, extract scanned content, generate visuals, and manage newsroom workflows with AI.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

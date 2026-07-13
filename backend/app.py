@@ -142,8 +142,9 @@ Rules:
 - Preserve the actual topic, people, place, event, and mood from the article.
 - If details are missing, use a safe generic local scene for that category instead of inventing named people or exact places.
 - Write in English because image models follow English visual prompts better.
-- Describe a single realistic news photograph, not a poster, graphic, collage, or newspaper page.
-- Explicitly forbid visible text, captions, logos, watermarks, and UI.
+- Describe a single realistic news photograph only, not a poster, graphic, collage, captioned image, or newspaper page.
+- Explicitly forbid visible text, captions, headlines, titles, labels, logos, watermarks, borders, frames, and UI.
+- Do not ask the image model to generate a caption or any written words. The final image must be only the clean photo.
 - Keep it under 90 words.
 Respond ONLY with JSON."""
 
@@ -618,7 +619,8 @@ def build_visual_prompt(payload: dict[str, Any]) -> str:
     return (
         f"Accurate documentary news photograph for this {category} article: {headline}. "
         f"Article context: {context}. "
-        f"Show {scene}. Natural light, realistic Indian photojournalism, clear subject focus, no visible words, no captions, no logos, no watermark."
+        f"Show {scene}. Natural light, realistic Indian photojournalism, clear subject focus. "
+        "Generate only the clean photograph: no visible words, no caption, no headline, no title, no label, no logo, no watermark, no border, no frame."
     )
 
 
@@ -628,7 +630,7 @@ def call_openai_image(visual_prompt: str) -> str | None:
         "Make it look like an actual field photo taken by a local photojournalist in Karnataka, India. "
         "Use natural light, believable people, authentic clothing, real-world streets/offices/farms/schools/stadiums as appropriate, "
         "clear subject focus, strong newspaper composition, and no fantasy styling. "
-        "Do not include words, captions, typography, logos, watermarks, UI, posters, fake newspaper pages, or collage layouts. "
+        "Generate only the image itself. Do not include any caption, headline, title, label, written words, typography, logos, watermarks, UI, borders, frames, posters, fake newspaper pages, or collage layouts. "
         f"Article brief: {visual_prompt}"
     )
 
@@ -694,7 +696,7 @@ def call_pollinations_image(visual_prompt: str) -> str | None:
     base_url = (env_value("POLLINATIONS_BASE_URL") or "https://gen.pollinations.ai").rstrip("/")
     image_prompt = (
         "Accurate realistic editorial news photograph, documentary photojournalism, natural light, authentic Indian local scene, "
-        "clear subject, no text, no logo, no watermark, no poster, no graphic design. "
+        "clear subject. Generate only the clean photo: no text, no caption, no headline, no title, no label, no logo, no watermark, no border, no poster, no graphic design. "
         f"{visual_prompt}"
     )
     query = {
@@ -761,7 +763,7 @@ def normalize_article_result(result: dict[str, Any], text: str) -> dict[str, Any
 
 
 def fallback_image(prompt: str) -> str:
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760">
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760">
 <rect width="1200" height="760" fill="#f4f0e8"/>
 <rect x="72" y="72" width="1056" height="616" fill="#ffffff" stroke="#1f2937" stroke-width="10"/>
 <rect x="120" y="132" width="420" height="260" fill="#d7e3df"/>
@@ -771,7 +773,6 @@ def fallback_image(prompt: str) -> str:
 <rect x="120" y="440" width="960" height="28" fill="#374151"/>
 <rect x="120" y="500" width="860" height="24" fill="#9ca3af"/>
 <rect x="120" y="548" width="910" height="24" fill="#9ca3af"/>
-<text x="120" y="635" fill="#111827" font-size="34" font-family="Arial, sans-serif">Image placeholder: {prompt[:52]}</text>
 </svg>"""
     encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
     return f"data:image/svg+xml;base64,{encoded}"
@@ -950,31 +951,6 @@ def handle_generate_image(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
     return {"image_url": fallback_image(visual_prompt), "provider": "fallback", "backend_version": BACKEND_VERSION}
-
-
-def handle_generate_layout(payload: dict[str, Any]) -> dict[str, Any]:
-    articles = payload.get("articles") or []
-    articles_per_page = 7
-    positions = ["top", "middle", "middle", "middle", "bottom", "bottom", "bottom"]
-    layout = []
-
-    sorted_articles = sorted(articles, key=lambda item: item.get("priority_score") or 0, reverse=True)
-    for index, article in enumerate(sorted_articles):
-        slot = index % articles_per_page
-        is_lead = slot == 0
-        layout.append(
-            {
-                "article_id": article.get("id"),
-                "page_number": index // articles_per_page + 1,
-                "position": positions[slot],
-                "headline_size": "big" if is_lead else "small" if slot == 3 else "medium",
-                "image_size": "large" if is_lead else "medium",
-                "column_count": 3 if is_lead else 2,
-                "slot_index": slot,
-            }
-        )
-
-    return {"layout": layout, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
 def normalize_instagram_tag(value: Any, prefix: str) -> str:
@@ -1307,7 +1283,6 @@ HANDLERS = {
     "process-ocr": handle_process_ocr,
     "process-article-ai": handle_process_article,
     "generate-image": handle_generate_image,
-    "generate-layout": handle_generate_layout,
     "generate-instagram-content": handle_generate_instagram_content,
     "edit-social-content": handle_edit_social_content,
     "list-scheduled-posts": handle_list_scheduled_posts,
@@ -1367,7 +1342,7 @@ def main() -> None:
     port = int(os.environ.get("PY_BACKEND_PORT", "8000"))
     server = ThreadingHTTPServer(("127.0.0.1", port), BackendHandler)
     print(f"Python backend running at http://127.0.0.1:{port}")
-    print("Endpoints are available at /functions/v1/{process-ocr,process-article-ai,generate-image,generate-layout,generate-instagram-content,edit-social-content,list-scheduled-posts,schedule-post,update-scheduled-post,cancel-scheduled-post,delete-scheduled-post,tts-kannada}")
+    print("Endpoints are available at /functions/v1/{process-ocr,process-article-ai,generate-image,generate-instagram-content,edit-social-content,list-scheduled-posts,schedule-post,update-scheduled-post,cancel-scheduled-post,delete-scheduled-post,tts-kannada}")
     server.serve_forever()
 
 

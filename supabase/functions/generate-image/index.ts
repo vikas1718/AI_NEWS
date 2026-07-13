@@ -54,7 +54,13 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: "user",
-            content: `Photorealistic Indian newspaper editorial photograph: ${prompt}. Documentary photojournalism style, natural lighting, no text overlays.`,
+            content: [
+              "Generate only one photorealistic Indian newspaper editorial photograph.",
+              `Scene brief: ${prompt}.`,
+              "Documentary photojournalism style, natural lighting, realistic local setting.",
+              "Do not generate any caption, headline, title, label, text overlay, lower-third, poster, signboard text, logo, watermark, border, frame, newspaper page, or graphic layout.",
+              "The output must be only the clean photo image.",
+            ].join(" "),
           },
         ],
         modalities: ["image", "text"],

@@ -272,6 +272,7 @@ export function NewspaperArticleBlockContent({
   const backgroundStyle = hideArticleBackground
     ? undefined
     : newspaperArticleBackgroundStyle(article);
+  const shouldHideImageCaption = hideImageCaption || article.image_source === "ai_generated";
 
   function imageFigure() {
     if (!article.image_url || !image) return null;
@@ -308,7 +309,7 @@ export function NewspaperArticleBlockContent({
           className="block w-full select-none object-cover"
           style={{ aspectRatio: image.aspectRatio }}
         />
-        {!hideImageCaption && image.caption && (
+        {!shouldHideImageCaption && image.caption && (
           <figcaption className="px-1.5 py-1 text-left text-[8px] italic leading-[1.15] text-newsprint-ink/70">
             {image.caption}
           </figcaption>

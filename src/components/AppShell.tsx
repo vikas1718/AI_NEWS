@@ -10,7 +10,6 @@ import {
   Settings,
   Share2,
   Users,
-  Wand2,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -30,7 +29,6 @@ import { roleLabels } from "@/lib/rbac";
 type NavRoute =
   | "/dashboard"
   | "/editions"
-  | "/ai-generate-layout"
   | "/review"
   | "/team"
   | "/settings"
@@ -45,7 +43,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const isEditionWorkspace = pathname.startsWith("/editions/");
 
   const items: Array<{
     to: NavRoute;
@@ -55,7 +52,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   }> = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: true },
     { to: "/editions", label: role === "editor" ? "My Editions" : "Editions", icon: Newspaper, show: true },
-    { to: "/ai-generate-layout", label: "AI Generate Layout", icon: Wand2, show: true },
     { to: "/multiplatform/instagram", label: "Multiplatform", icon: Share2, show: true },
     { to: "/review", label: "Review Queue", icon: FileCheck2, show: role === "chief_editor" },
     { to: "/team", label: "Organization", icon: Users, show: true },
@@ -246,7 +242,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {renderSidebar(false)}
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-x-hidden transition-[margin,width] duration-300 ease-out">
+      <main className="min-w-0 flex-1 overflow-x-hidden">
         <header className="sticky top-0 z-30 bg-background/92 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden">
           <div className="flex h-14 items-center gap-3 px-4 sm:px-6">
             <button
@@ -261,10 +257,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
         <div
-          className={cn(
-            "mx-auto px-4 py-6 sm:px-6 sm:py-8",
-            isEditionWorkspace ? "w-full max-w-[1920px] 2xl:px-8" : "max-w-7xl",
-          )}
+          className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8"
         >
           {children}
         </div>

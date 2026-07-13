@@ -17,7 +17,6 @@ export type PermissionKey =
   | "submit_for_review"
   | "delete_newspapers"
   | "access_ai_generation"
-  | "access_layout_generation"
   | "access_assigned_pages"
   | "save_drafts"
   | "organization_settings"
@@ -66,7 +65,6 @@ const ownerPermissions: PermissionKey[] = [
   "submit_for_review",
   "delete_newspapers",
   "access_ai_generation",
-  "access_layout_generation",
   "access_assigned_pages",
   "save_drafts",
   "organization_settings",
@@ -87,7 +85,6 @@ export const rolePermissions: Record<OrganizationRole, PermissionKey[]> = {
     "publish_articles",
     "manage_editorial_workflow",
     "access_ai_generation",
-    "access_layout_generation",
     "organization_settings",
     "user_management",
   ],
@@ -96,8 +93,8 @@ export const rolePermissions: Record<OrganizationRole, PermissionKey[]> = {
     "create_articles",
     "edit_articles",
     "submit_for_review",
+    "delete_newspapers",
     "access_ai_generation",
-    "access_layout_generation",
     "access_assigned_pages",
     "save_drafts",
   ],
