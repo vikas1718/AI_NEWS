@@ -62,6 +62,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 type SlotKind = "lead" | "story" | "image" | "ad" | "sidebar";
 type PreviewMode = "print" | "pdf" | "mobile";
+type SlotResizeHandle = "n" | "e" | "s" | "w" | "ne" | "nw" | "se" | "sw";
 
 type LayoutSlot = {
   id: string;
@@ -755,6 +756,34 @@ function canResizeSlot(slots: LayoutSlot[], slotId: string, next: LayoutSlot) {
   return !slots.some((slot) => slot.id !== slotId && collides(next, slot));
 }
 
+function resizedSlotFromHandle(
+  slot: LayoutSlot,
+  handle: SlotResizeHandle,
+  dxCells: number,
+  dyCells: number,
+) {
+  const next = { ...slot };
+  const rightEdge = slot.x + slot.w - 1;
+  const bottomEdge = slot.y + slot.h - 1;
+
+  if (handle.includes("e")) {
+    next.w = Math.max(2, slot.w + dxCells);
+  }
+  if (handle.includes("s")) {
+    next.h = Math.max(2, slot.h + dyCells);
+  }
+  if (handle.includes("w")) {
+    next.x = clamp(slot.x + dxCells, 1, rightEdge - 1);
+    next.w = rightEdge - next.x + 1;
+  }
+  if (handle.includes("n")) {
+    next.y = clamp(slot.y + dyCells, 1, bottomEdge - 1);
+    next.h = bottomEdge - next.y + 1;
+  }
+
+  return next;
+}
+
 function reflowSlotsIntoOpenSpace(
   slots: LayoutSlot[],
   assignments: Record<string, SlotAssignment>,
@@ -1057,6 +1086,7 @@ function ArticleSlot({
   canEdit,
   onSelect,
   onUpdateAssignment,
+  onResizeStart,
 }: {
   slot: LayoutSlot;
   assignment?: SlotAssignment;
@@ -1066,6 +1096,11 @@ function ArticleSlot({
   canEdit: boolean;
   onSelect: () => void;
   onUpdateAssignment: (assignment: SlotAssignment) => void;
+  onResizeStart?: (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    slot: LayoutSlot,
+    handle: SlotResizeHandle,
+  ) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `slot:${slot.id}`,
@@ -1163,11 +1198,38 @@ function ArticleSlot({
     );
   }
 
+  const showBlockResizeHandles = showChrome && canEdit && !slot.locked && Boolean(onResizeStart);
+  const blockResizeHandleClass =
+    "absolute rounded-sm bg-primary/90 shadow-sm ring-1 ring-white/80 transition hover:bg-primary";
+  const blockResizeHandleVisibility = selected
+    ? "opacity-100"
+    : "opacity-0 group-hover:opacity-100";
+
+  function blockResizeHandle(
+    handle: SlotResizeHandle,
+    label: string,
+    className: string,
+    cursorClass: string,
+  ) {
+    if (!showBlockResizeHandles) return null;
+
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        title={label}
+        className={`${blockResizeHandleClass} ${blockResizeHandleVisibility} ${cursorClass} ${className}`}
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => onResizeStart?.(event, slot, handle)}
+      />
+    );
+  }
+
   return (
     <div
       ref={setNodeRef}
       data-article-slot
-      className={`relative min-h-0 overflow-hidden bg-white transition ${
+      className={`group relative min-h-0 overflow-hidden bg-white transition ${
         selected ? "ring-2 ring-primary" : ""
       } ${isOver ? "bg-emerald-50 ring-2 ring-emerald-500" : ""} ${!assignment?.articleId && !assignment?.ad && !isAd ? "bg-muted/20" : ""}`}
       style={{
@@ -1247,6 +1309,59 @@ function ArticleSlot({
           assignment={assignment}
           imageControls={editorImageControls()}
         />
+      )}
+
+      {showBlockResizeHandles && (
+        <div className="pointer-events-none absolute inset-0 z-20">
+          {blockResizeHandle(
+            "n",
+            "Resize block from top",
+            "left-1/2 top-0 h-2 w-8 -translate-x-1/2",
+            "pointer-events-auto cursor-ns-resize",
+          )}
+          {blockResizeHandle(
+            "s",
+            "Resize block from bottom",
+            "bottom-0 left-1/2 h-2 w-8 -translate-x-1/2",
+            "pointer-events-auto cursor-ns-resize",
+          )}
+          {blockResizeHandle(
+            "e",
+            "Resize block from right",
+            "right-0 top-1/2 h-8 w-2 -translate-y-1/2",
+            "pointer-events-auto cursor-ew-resize",
+          )}
+          {blockResizeHandle(
+            "w",
+            "Resize block from left",
+            "left-0 top-1/2 h-8 w-2 -translate-y-1/2",
+            "pointer-events-auto cursor-ew-resize",
+          )}
+          {blockResizeHandle(
+            "nw",
+            "Resize block from top left",
+            "left-0 top-0 h-3 w-3",
+            "pointer-events-auto cursor-nwse-resize",
+          )}
+          {blockResizeHandle(
+            "ne",
+            "Resize block from top right",
+            "right-0 top-0 h-3 w-3",
+            "pointer-events-auto cursor-nesw-resize",
+          )}
+          {blockResizeHandle(
+            "sw",
+            "Resize block from bottom left",
+            "bottom-0 left-0 h-3 w-3",
+            "pointer-events-auto cursor-nesw-resize",
+          )}
+          {blockResizeHandle(
+            "se",
+            "Resize block from bottom right",
+            "bottom-0 right-0 h-3 w-3",
+            "pointer-events-auto cursor-nwse-resize",
+          )}
+        </div>
       )}
     </div>
   );
@@ -1723,6 +1838,76 @@ export function NewspaperLayoutEditor({
     }));
   }
 
+  function resizeSlotByDrag(
+    startEvent: ReactPointerEvent<HTMLButtonElement>,
+    slot: LayoutSlot,
+    handle: SlotResizeHandle,
+  ) {
+    if (!canEdit || slot.locked) return;
+    startEvent.preventDefault();
+    startEvent.stopPropagation();
+
+    const slotElement = startEvent.currentTarget.closest("[data-article-slot]");
+    const slotRect = slotElement?.getBoundingClientRect();
+    if (!slotRect) return;
+
+    const cellWidth = Math.max(slotRect.width / slot.w, 1);
+    const cellHeight = Math.max(slotRect.height / slot.h, 1);
+    const startX = startEvent.clientX;
+    const startY = startEvent.clientY;
+    const startSlot = { ...slot };
+    const startSlots = cloneSlots(state.slots);
+    const startState = state;
+    let lastSlot = startSlot;
+    let historyRecorded = false;
+
+    setSelectedSlotId(slot.id);
+
+    function isSameSlot(a: LayoutSlot, b: LayoutSlot) {
+      return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+    }
+
+    function applySlot(next: LayoutSlot) {
+      if (isSameSlot(lastSlot, next)) return;
+
+      if (!historyRecorded) {
+        setPast((items) => [...items.slice(-19), startState]);
+        setFuture([]);
+        historyRecorded = true;
+      }
+
+      lastSlot = next;
+      setPageStates((currentPages) => {
+        const current = currentPages[activePage] ?? startState;
+
+        return {
+          ...currentPages,
+          [activePage]: {
+            ...current,
+            slots: current.slots.map((item) => (item.id === slot.id ? next : item)),
+          },
+        };
+      });
+    }
+
+    function onMove(event: PointerEvent) {
+      const dxCells = Math.round((event.clientX - startX) / cellWidth);
+      const dyCells = Math.round((event.clientY - startY) / cellHeight);
+      const next = resizedSlotFromHandle(startSlot, handle, dxCells, dyCells);
+
+      if (!canResizeSlot(startSlots, slot.id, next)) return;
+      applySlot(next);
+    }
+
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
   function autoFitCurrentPage() {
     commit((current) => autoFitArticleSpace(current, articleById));
     toast.success("Article spaces auto fitted");
@@ -2106,6 +2291,7 @@ export function NewspaperLayoutEditor({
                           previewMode={previewMode}
                           canEdit={canEdit}
                           onSelect={() => setSelectedSlotId(FRONT_PAGE_HEADER_AD_SLOT_ID)}
+                          onResizeStart={resizeSlotByDrag}
                           onUpdateAssignment={(nextAssignment) =>
                             setAssignment(FRONT_PAGE_HEADER_AD_SLOT_ID, nextAssignment)
                           }
@@ -2155,6 +2341,7 @@ export function NewspaperLayoutEditor({
                           previewMode={previewMode}
                           canEdit={canEdit}
                           onSelect={() => setSelectedSlotId(slot.id)}
+                          onResizeStart={resizeSlotByDrag}
                           onUpdateAssignment={(nextAssignment) =>
                             setAssignment(slot.id, nextAssignment)
                           }
