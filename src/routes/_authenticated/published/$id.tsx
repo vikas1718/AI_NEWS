@@ -15,6 +15,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { getPrintPageCount, NewspaperPage } from "@/components/NewspaperPage";
+import {
+  hasSavedEditorLayout,
+  savedLayoutPageNumbers,
+  SavedLayoutPreviewPage,
+} from "@/components/SavedLayoutPreviewPage";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { supabaseUntyped } from "@/lib/supabase-untyped";
@@ -93,6 +98,22 @@ function PublishedView() {
     },
   });
 
+  const { data: latestLayout } = useQuery({
+    queryKey: ["published-saved-layout", id, newspaper?.id],
+    enabled: Boolean(newspaper?.id),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("layouts")
+        .select("layout_json")
+        .eq("newspaper_id", id)
+        .order("generated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.layout_json ?? null;
+    },
+  });
+
   async function downloadPdf() {
     if (!previewRef.current) return;
     toast.info("Generating PDF...");
@@ -101,22 +122,33 @@ function PublishedView() {
       import("html2canvas"),
     ]);
     const pages = previewRef.current.querySelectorAll("[data-print-page]");
+    if (pages.length === 0) {
+      toast.error("No preview pages found for PDF export");
+      return;
+    }
     const pdf = new jsPDF({ unit: "px", format: [780, 1084] });
     for (let i = 0; i < pages.length; i++) {
       const canvas = await html2canvas(pages[i] as HTMLElement, {
         backgroundColor: "#ffffff",
-        scale: 1.5,
+        scale: 2,
+        useCORS: true,
       });
-      const img = canvas.toDataURL("image/jpeg", 0.85);
+      const img = canvas.toDataURL("image/png");
       if (i > 0) pdf.addPage();
-      pdf.addImage(img, "JPEG", 0, 0, 780, 1084);
+      pdf.addImage(img, "PNG", 0, 0, 780, 1084);
     }
     pdf.save(`${newspaper?.edition_name}-${newspaper?.edition_date}.pdf`);
   }
 
   if (!newspaper) return <div>Loading...</div>;
-  const totalPages = getPrintPageCount(articles, newspaper.number_of_pages);
-  const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+  const hasSavedPreview = hasSavedEditorLayout(latestLayout);
+  const savedPreviewPages = savedLayoutPageNumbers(latestLayout);
+  const totalPages = hasSavedPreview
+    ? savedPreviewPages.length
+    : getPrintPageCount(articles, newspaper.number_of_pages);
+  const pages = hasSavedPreview
+    ? savedPreviewPages
+    : Array.from({ length: totalPages }, (_, i) => i + 1);
   const topArticles = [...articles]
     .sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0))
     .slice(0, 3);
@@ -243,12 +275,22 @@ function PublishedView() {
         <div ref={previewRef} className="space-y-6">
           {pages.map((page) => (
             <div key={page} data-page>
-              <NewspaperPage
-                newspaper={newspaper}
-                articles={articles}
-                pageNumber={page}
-                totalPages={totalPages}
-              />
+              {hasSavedPreview ? (
+                <SavedLayoutPreviewPage
+                  newspaper={newspaper}
+                  articles={articles}
+                  layoutJson={latestLayout}
+                  pageNumber={page}
+                  totalPages={totalPages}
+                />
+              ) : (
+                <NewspaperPage
+                  newspaper={newspaper}
+                  articles={articles}
+                  pageNumber={page}
+                  totalPages={totalPages}
+                />
+              )}
             </div>
           ))}
         </div>

@@ -2,6 +2,7 @@ import { createFileRoute, Link, useRouteContext, redirect } from "@tanstack/reac
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Check, Clock3, Loader2, Rocket, Share2, XCircle } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -145,6 +146,22 @@ function socialPostTitle(post: SocialPost) {
   return text.split("\n").find((line) => line.trim())?.trim().slice(0, 90) || "Untitled social post";
 }
 
+function isMissingPublicationJobsTable(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown; details?: unknown };
+  const text = [candidate.code, candidate.message, candidate.details]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+
+  return (
+    text.includes("publication_jobs") &&
+    (text.includes("PGRST205") ||
+      text.includes("schema cache") ||
+      text.includes("Could not find the table") ||
+      text.includes("does not exist"))
+  );
+}
+
 function createPipelineOutputUrls(newspaper: Newspaper) {
   const editionRoot = `/published/${newspaper.id}`;
   const assetRoot = `/generated/${newspaper.id}`;
@@ -192,6 +209,11 @@ export async function runPublicationPipeline({
     })
     .select("id,newspaper_id,status,current_stage,stages,output_urls,error_message,created_at")
     .single();
+  if (isMissingPublicationJobsTable(jobError)) {
+    throw new Error(
+      "Publication pipeline table is missing. Run the Supabase migration 20260712110000_create_publication_pipeline_jobs.sql.",
+    );
+  }
   if (jobError) throw jobError;
 
   let stages = initialStages;
@@ -326,6 +348,7 @@ function ReviewQueue() {
   const organizationId = ctx.organization?.id;
   const qc = useQueryClient();
   const canPublish = hasPermission(ctx.permissions, "publish_articles");
+  const [publicationJobsAvailable, setPublicationJobsAvailable] = useState(true);
 
   const { data: socialReviewQueue = [] } = useQuery({
     queryKey: ["social-review-queue", organizationId],
@@ -390,7 +413,8 @@ function ReviewQueue() {
   const approvedNewspaperIds = approvedQueue.map((newspaper) => newspaper.id);
   const { data: publicationJobs = [] } = useQuery({
     queryKey: ["publication-jobs", organizationId, approvedNewspaperIds.join(",")],
-    enabled: Boolean(organizationId) && approvedNewspaperIds.length > 0,
+    enabled:
+      publicationJobsAvailable && Boolean(organizationId) && approvedNewspaperIds.length > 0,
     refetchInterval: 2000,
     queryFn: async () => {
       const { data, error } = await supabaseUntyped
@@ -398,6 +422,10 @@ function ReviewQueue() {
         .select("id,newspaper_id,status,current_stage,stages,output_urls,error_message,created_at")
         .in("newspaper_id", approvedNewspaperIds)
         .order("created_at", { ascending: false });
+      if (isMissingPublicationJobsTable(error)) {
+        setPublicationJobsAvailable(false);
+        return [];
+      }
       if (error) throw error;
       return (data ?? []) as PublicationJob[];
     },

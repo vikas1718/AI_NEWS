@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AI News Studio">
+  <rect width="64" height="64" rx="14" fill="#07111f"/>
+  <path d="M16 14h28a6 6 0 0 1 6 6v30H20a6 6 0 0 1-6-6V16a2 2 0 0 1 2-2Z" fill="#0f2137" stroke="#22d3ee" stroke-width="3"/>
+  <path d="M22 23h16M22 31h20M22 39h12" stroke="#e5f7ff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M46 12v10M41 17h10" stroke="#f97316" stroke-width="3" stroke-linecap="round"/>
+  <path d="M42 40l5 5 10-13" fill="none" stroke="#2dd4bf" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

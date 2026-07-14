@@ -48,6 +48,7 @@ import {
   NewspaperArticleBlockContent,
   getNewspaperArticleFit,
   newspaperArticleText,
+  normalizeNewspaperImageCaption,
   normalizeNewspaperImagePlacement,
   normalizeNewspaperTextTuning,
   optimizeNewspaperImagePlacement,
@@ -2957,13 +2958,15 @@ export function NewspaperLayoutEditor({
                           <Label className="text-xs">Caption</Label>
                           <Input
                             key={`caption-${selectedArticle.id}-${selectedSlot?.id}`}
-                            defaultValue={selectedImage.caption}
-                            onBlur={(event) =>
+                            defaultValue={normalizeNewspaperImageCaption(selectedImage.caption)}
+                            onBlur={(event) => {
+                              const caption = normalizeNewspaperImageCaption(event.target.value);
+                              event.target.value = caption;
                               updateSelectedImage({
                                 ...selectedImage,
-                                caption: event.target.value,
-                              })
-                            }
+                                caption,
+                              });
+                            }}
                             disabled={!canEdit}
                           />
                         </div>

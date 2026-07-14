@@ -57,6 +57,7 @@ type FittingPlan = {
 
 const MIN_IMAGE_WIDTH_PCT = 28;
 const MAX_IMAGE_WIDTH_PCT = 100;
+export const MAX_IMAGE_CAPTION_WORDS = 5;
 const MIN_TEXT_SCALE = 80;
 const MAX_TEXT_SCALE = 130;
 const DEFAULT_TEXT_TUNING: NewspaperTextTuning = { headlineScale: 100, bodyScale: 100 };
@@ -72,6 +73,15 @@ const BACKGROUND_COLOR_FALLBACK_KEY = "article_background_color";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+export function normalizeNewspaperImageCaption(value: string | null | undefined) {
+  return (value ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, MAX_IMAGE_CAPTION_WORDS)
+    .join(" ");
 }
 
 export function newspaperArticleText(article?: Article) {
@@ -124,11 +134,11 @@ export function normalizeNewspaperTextTuning(tuning?: NewspaperTextTuning): News
 
 function imageCaption(article?: Article) {
   if (!article) return "";
-  return article.summary
-    ? article.summary.slice(0, 110)
-    : article.headline
-      ? `Photo: ${article.headline}`
-      : "Photo";
+  return (
+    normalizeNewspaperImageCaption(article.summary) ||
+    normalizeNewspaperImageCaption(article.headline) ||
+    "Photo"
+  );
 }
 
 export function optimizeNewspaperImagePlacement(
@@ -190,6 +200,7 @@ export function normalizeNewspaperImagePlacement(
     widthPct: clamp(next.widthPct, MIN_IMAGE_WIDTH_PCT, maxWidth),
     margin: clamp(next.margin, 4, 14),
     aspectRatio: clamp(next.aspectRatio, 0.7, 2),
+    caption: normalizeNewspaperImageCaption(next.caption),
   };
 }
 
@@ -278,6 +289,7 @@ export function NewspaperArticleBlockContent({
 
     const floated = image.position === "left" || image.position === "right";
     const figureWidth = image.position === "full" ? "100%" : `${image.widthPct}%`;
+    const caption = normalizeNewspaperImageCaption(image.caption);
 
     return (
       <figure
@@ -308,9 +320,9 @@ export function NewspaperArticleBlockContent({
           className="block w-full select-none object-cover"
           style={{ aspectRatio: image.aspectRatio }}
         />
-        {!hideImageCaption && image.caption && (
+        {!hideImageCaption && caption && (
           <figcaption className="px-1.5 py-1 text-left text-[8px] italic leading-[1.15] text-newsprint-ink/70">
-            {image.caption}
+            {caption}
           </figcaption>
         )}
         {imageControls}

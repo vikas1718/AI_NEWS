@@ -48,10 +48,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: true },
     { to: "/editions", label: role === "editor" ? "My Editions" : "Editions", icon: Newspaper, show: true },
     { to: "/multiplatform/instagram", label: "Multiplatform", icon: Share2, show: true },
-    { to: "/text-to-speech", label: "Text-to-Speech (🔊)", icon: Volume2, show: true },
+    { to: "/text-to-speech", label: "Text-to-Speech", icon: Volume2, show: true },
     { to: "/review", label: "Review Queue", icon: FileCheck2, show: role === "chief_editor" },
     { to: "/team", label: "Organization", icon: Users, show: true },
-    { to: "/settings", label: "Profile", icon: Settings, show: true },
+    { to: "/settings", label: "Settings", icon: Settings, show: true },
   ].filter((x) => x.show);
 
   async function signOut() {
@@ -125,7 +125,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               to={it.to}
               title={collapsed ? it.label : undefined}
               className={cn(
-                "mb-1 flex items-center rounded-md text-sm font-medium transition-colors",
+                "mb-1 flex items-center rounded-md text-base font-medium transition-colors",
                 collapsed ? "h-11 justify-center px-0" : "gap-3 px-3 py-2",
                 active
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
@@ -151,7 +151,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           type="button"
           onClick={() => setSidebarOpen((open) => !open)}
           className={cn(
-            "mt-3 hidden w-full items-center rounded-md text-sm font-medium text-sidebar-foreground/70 transition hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground md:flex",
+            "mt-3 hidden w-full items-center rounded-md text-base font-medium text-sidebar-foreground/70 transition hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground md:flex",
             collapsed ? "h-11 justify-center px-0" : "gap-2 px-3 py-2",
           )}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
