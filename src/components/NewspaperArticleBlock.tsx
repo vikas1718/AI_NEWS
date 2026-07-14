@@ -332,6 +332,7 @@ export function NewspaperArticleBlockContent({
 
   return (
     <div
+      data-newspaper-article-block
       className="flex h-full flex-col text-newsprint-ink"
       style={{ ...backgroundStyle, gap: fit.spacing, padding: fit.padding }}
     >

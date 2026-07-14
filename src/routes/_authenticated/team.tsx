@@ -82,6 +82,8 @@ function TeamPage() {
   const canInvite = hasPermission(ctx.permissions, "invite_members");
   const canChangeRoles = hasPermission(ctx.permissions, "change_roles");
   const canRemove = hasPermission(ctx.permissions, "remove_members");
+  const canRemoveMember = (member: MemberRow) =>
+    canRemove && member.role !== "owner" && (ctx.role === "owner" || member.role === "editor");
 
   const { data: members = [] } = useQuery({
     queryKey: ["organization-members", organization?.id],
@@ -381,7 +383,7 @@ function TeamPage() {
                     <td className="py-3 pr-4">{new Date(member.joined_at).toLocaleDateString()}</td>
                     {canManageTeam && (
                       <td className="py-3 text-right">
-                        {canRemove && member.role !== "owner" && (
+                        {canRemoveMember(member) && (
                           <Button
                             size="sm"
                             variant="outline"

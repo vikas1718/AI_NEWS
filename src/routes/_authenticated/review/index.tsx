@@ -1,14 +1,20 @@
 import { createFileRoute, Link, useRouteContext, redirect } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Check, Clock3, Loader2, Rocket, Share2, XCircle } from "lucide-react";
-import { useState } from "react";
+import { Check, Loader2, Printer, Rocket, Share2, XCircle } from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { getPrintPageCount, NewspaperPage } from "@/components/NewspaperPage";
+import {
+  hasSavedEditorLayout,
+  savedLayoutPageNumbers,
+  SavedLayoutPreviewPage,
+} from "@/components/SavedLayoutPreviewPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { aiFn, type Article, type Newspaper } from "@/lib/api";
+import type { Article, Newspaper } from "@/lib/api";
 import { hasPermission } from "@/lib/rbac";
 import { supabaseUntyped } from "@/lib/supabase-untyped";
 
@@ -21,39 +27,9 @@ export const Route = createFileRoute("/_authenticated/review/")({
   component: ReviewQueue,
 });
 
-type PipelineStageKey = "website" | "pdf" | "print" | "mobile" | "social";
-type PipelineStageStatus = "queued" | "running" | "completed" | "failed";
-
-type PipelineStage = {
-  key: PipelineStageKey;
-  label: string;
-  status: PipelineStageStatus;
-};
-
-type PublicationJob = {
-  id: string;
-  newspaper_id: string;
-  status: "queued" | "running" | "completed" | "failed";
-  current_stage: PipelineStageKey | null;
-  stages: PipelineStage[];
-  output_urls: Record<string, unknown>;
-  error_message: string | null;
-  created_at: string;
-};
-
 type PipelineOutputs = {
-  website_url?: string;
-  epaper_url?: string;
   pdf_url?: string;
   print_pdf_url?: string;
-  print_ready_url?: string;
-  mobile_url?: string;
-  social_media_kit_url?: string;
-  instagram_card_url?: string;
-  facebook_post_url?: string;
-  whatsapp_share_url?: string;
-  audio_url?: string;
-  social_slides?: unknown;
 };
 
 type SocialPostStatus =
@@ -94,30 +70,6 @@ type SocialPost = {
   updated_at: string;
 };
 
-const pipelineStageDefinitions: Array<Omit<PipelineStage, "status">> = [
-  { key: "website", label: "Website" },
-  { key: "pdf", label: "PDF" },
-  { key: "print", label: "Print" },
-  { key: "mobile", label: "Mobile" },
-  { key: "social", label: "Social Media" },
-];
-
-function createQueuedStages(): PipelineStage[] {
-  return pipelineStageDefinitions.map((stage) => ({ ...stage, status: "queued" }));
-}
-
-function setStageStatus(
-  stages: PipelineStage[],
-  stageKey: PipelineStageKey,
-  status: PipelineStageStatus,
-) {
-  return stages.map((stage) => (stage.key === stageKey ? { ...stage, status } : stage));
-}
-
-function getLatestJobForNewspaper(jobs: PublicationJob[], newspaperId: string) {
-  return jobs.find((job) => job.newspaper_id === newspaperId) ?? null;
-}
-
 function socialPlatformLabel(platform: SocialPost["platform"]) {
   switch (platform) {
     case "instagram":
@@ -146,7 +98,7 @@ function socialPostTitle(post: SocialPost) {
   return text.split("\n").find((line) => line.trim())?.trim().slice(0, 90) || "Untitled social post";
 }
 
-function isMissingPublicationJobsTable(error: unknown) {
+function isMissingPublicationColumn(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const candidate = error as { code?: unknown; message?: unknown; details?: unknown };
   const text = [candidate.code, candidate.message, candidate.details]
@@ -154,191 +106,78 @@ function isMissingPublicationJobsTable(error: unknown) {
     .join(" ");
 
   return (
-    text.includes("publication_jobs") &&
-    (text.includes("PGRST205") ||
+    text.includes("publications") &&
+    (text.includes("PGRST204") ||
       text.includes("schema cache") ||
-      text.includes("Could not find the table") ||
-      text.includes("does not exist"))
+      text.includes("Could not find") ||
+      text.includes("column"))
   );
 }
 
-function createPipelineOutputUrls(newspaper: Newspaper) {
-  const editionRoot = `/published/${newspaper.id}`;
+function isPermissionDenied(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown; details?: unknown };
+  const text = [candidate.code, candidate.message, candidate.details]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+
+  return text.includes("42501") || text.includes("403") || text.includes("permission denied");
+}
+
+function createPdfOutputUrls(newspaper: Newspaper) {
   const assetRoot = `/generated/${newspaper.id}`;
 
   return {
-    website_url: editionRoot,
-    epaper_url: editionRoot,
     pdf_url: `${assetRoot}/edition.pdf`,
     print_pdf_url: `${assetRoot}/edition.pdf`,
-    print_ready_url: `${assetRoot}/print-ready.pdf`,
-    mobile_url: `${editionRoot}?surface=mobile`,
-    social_media_kit_url: `${editionRoot}#social`,
-    instagram_card_url: `${editionRoot}#social-instagram`,
-    facebook_post_url: `${editionRoot}#social-facebook`,
-    whatsapp_share_url: `${editionRoot}#social-whatsapp`,
   };
 }
 
-async function shortPipelinePause() {
-  await new Promise((resolve) => setTimeout(resolve, 300));
-}
-
-export async function runPublicationPipeline({
+async function persistPublishedEdition({
   newspaper,
-  articles,
-  userId,
+  outputs,
 }: {
   newspaper: Newspaper;
-  articles: Article[];
-  userId: string;
+  outputs: PipelineOutputs;
 }) {
-  const initialStages = createQueuedStages();
-  const outputUrls = createPipelineOutputUrls(newspaper);
+  const { error: newspaperError } = await supabase
+    .from("newspapers")
+    .update({ status: "published" })
+    .eq("id", newspaper.id)
+    .eq("organization_id", newspaper.organization_id);
+  if (newspaperError) throw newspaperError;
 
-  const { data: job, error: jobError } = await supabaseUntyped
-    .from("publication_jobs")
-    .insert({
+  const { error: existingPublicationError } = await supabaseUntyped
+    .from("publications")
+    .delete()
+    .eq("newspaper_id", newspaper.id);
+  if (existingPublicationError && !isPermissionDenied(existingPublicationError)) {
+    console.warn("[Publish PDF] Could not replace existing publication record", existingPublicationError);
+  }
+
+  const fullPublicationRecord = {
+    newspaper_id: newspaper.id,
+    pdf_url: outputs.pdf_url,
+    print_pdf_url: outputs.print_pdf_url,
+  };
+
+  const { error: publicationError } = await supabaseUntyped
+    .from("publications")
+    .insert(fullPublicationRecord);
+
+  if (isMissingPublicationColumn(publicationError)) {
+    const { error: legacyPublicationError } = await supabaseUntyped.from("publications").insert({
       newspaper_id: newspaper.id,
-      created_by: userId,
-      status: "running",
-      current_stage: "website",
-      stages: initialStages,
-      output_urls: {},
-      started_at: new Date().toISOString(),
-    })
-    .select("id,newspaper_id,status,current_stage,stages,output_urls,error_message,created_at")
-    .single();
-  if (isMissingPublicationJobsTable(jobError)) {
-    throw new Error(
-      "Publication pipeline table is missing. Run the Supabase migration 20260712110000_create_publication_pipeline_jobs.sql.",
-    );
-  }
-  if (jobError) throw jobError;
-
-  let stages = initialStages;
-  let outputs: PipelineOutputs = {};
-
-  async function updateJob(patch: Record<string, unknown>) {
-    const { error } = await supabaseUntyped.from("publication_jobs").update(patch).eq("id", job.id);
-    if (error) throw error;
-  }
-
-  async function runStage(
-    stageKey: PipelineStageKey,
-    generator: () => Promise<Partial<PipelineOutputs>> | Partial<PipelineOutputs>,
-  ) {
-    stages = setStageStatus(stages, stageKey, "running");
-    await updateJob({
-      current_stage: stageKey,
-      stages,
-      status: "running",
-      output_urls: outputs,
-    });
-
-    await shortPipelinePause();
-    const stageOutputs = await generator();
-    outputs = { ...outputs, ...stageOutputs };
-    stages = setStageStatus(stages, stageKey, "completed");
-    await updateJob({
-      current_stage: stageKey,
-      stages,
-      output_urls: outputs,
-    });
-  }
-
-  try {
-    await runStage("website", () => ({
-      website_url: outputUrls.website_url,
-      epaper_url: outputUrls.epaper_url,
-    }));
-
-    await runStage("pdf", () => ({
-      pdf_url: outputUrls.pdf_url,
-      print_pdf_url: outputUrls.print_pdf_url,
-    }));
-
-    await runStage("print", () => ({
-      print_ready_url: outputUrls.print_ready_url,
-    }));
-
-    await runStage("mobile", async () => {
-      const headlines = articles.map((article) => `${article.headline}. ${article.summary ?? ""}`).join(" ");
-      const tts = await aiFn.tts(headlines).catch(() => ({ audio_url: "" }));
-      return {
-        mobile_url: outputUrls.mobile_url,
-        audio_url: tts.audio_url,
-      };
-    });
-
-    await runStage("social", async () => {
-      const social = await aiFn.instagram(articles).catch(() => ({ slides: [] }));
-      return {
-        social_media_kit_url: outputUrls.social_media_kit_url,
-        instagram_card_url: outputUrls.instagram_card_url,
-        facebook_post_url: outputUrls.facebook_post_url,
-        whatsapp_share_url: outputUrls.whatsapp_share_url,
-        social_slides: social.slides,
-      };
-    });
-
-    const { error: existingPublicationError } = await supabaseUntyped
-      .from("publications")
-      .delete()
-      .eq("newspaper_id", newspaper.id);
-    if (existingPublicationError) throw existingPublicationError;
-
-    const { error: publicationError } = await supabaseUntyped.from("publications").insert({
-      newspaper_id: newspaper.id,
-      pipeline_job_id: job.id,
-      website_url: outputs.website_url,
-      epaper_url: outputs.epaper_url,
-      pdf_url: outputs.pdf_url,
       print_pdf_url: outputs.print_pdf_url,
-      print_ready_url: outputs.print_ready_url,
-      mobile_url: outputs.mobile_url,
-      audio_url: outputs.audio_url,
-      social_media_kit_url: outputs.social_media_kit_url,
-      instagram_card_url: outputs.instagram_card_url,
-      facebook_post_url: outputs.facebook_post_url,
-      whatsapp_share_url: outputs.whatsapp_share_url,
     });
-    if (publicationError) throw publicationError;
-
-    const { error: newspaperError } = await supabase
-      .from("newspapers")
-      .update({ status: "published" })
-      .eq("id", newspaper.id)
-      .eq("organization_id", newspaper.organization_id);
-    if (newspaperError) throw newspaperError;
-
-    await updateJob({
-      status: "completed",
-      current_stage: "social",
-      stages,
-      output_urls: outputs,
-      completed_at: new Date().toISOString(),
-      error_message: null,
-    });
-
-    return { jobId: job.id, outputs };
-  } catch (error) {
-    if (job?.id) {
-      const currentStage = stages.find((stage) => stage.status === "running")?.key ?? "website";
-      stages = setStageStatus(stages, currentStage, "failed");
-      await supabaseUntyped
-        .from("publication_jobs")
-        .update({
-          status: "failed",
-          current_stage: currentStage,
-          stages,
-          output_urls: outputs,
-          error_message: error instanceof Error ? error.message : "Publication pipeline failed",
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", job.id);
+    if (legacyPublicationError && !isPermissionDenied(legacyPublicationError)) {
+      console.warn("[Publish PDF] Could not save legacy publication record", legacyPublicationError);
     }
-    throw error;
+  } else if (publicationError) {
+    if (!isPermissionDenied(publicationError)) {
+      console.warn("[Publish PDF] Could not save publication record", publicationError);
+    }
   }
 }
 
@@ -348,7 +187,6 @@ function ReviewQueue() {
   const organizationId = ctx.organization?.id;
   const qc = useQueryClient();
   const canPublish = hasPermission(ctx.permissions, "publish_articles");
-  const [publicationJobsAvailable, setPublicationJobsAvailable] = useState(true);
 
   const { data: socialReviewQueue = [] } = useQuery({
     queryKey: ["social-review-queue", organizationId],
@@ -410,50 +248,19 @@ function ReviewQueue() {
     },
   });
 
-  const approvedNewspaperIds = approvedQueue.map((newspaper) => newspaper.id);
-  const { data: publicationJobs = [] } = useQuery({
-    queryKey: ["publication-jobs", organizationId, approvedNewspaperIds.join(",")],
-    enabled:
-      publicationJobsAvailable && Boolean(organizationId) && approvedNewspaperIds.length > 0,
-    refetchInterval: 2000,
+  const { data: exportedPdfQueue = [] } = useQuery({
+    queryKey: ["exported-pdf-queue", organizationId],
+    enabled: Boolean(organizationId),
     queryFn: async () => {
-      const { data, error } = await supabaseUntyped
-        .from("publication_jobs")
-        .select("id,newspaper_id,status,current_stage,stages,output_urls,error_message,created_at")
-        .in("newspaper_id", approvedNewspaperIds)
-        .order("created_at", { ascending: false });
-      if (isMissingPublicationJobsTable(error)) {
-        setPublicationJobsAvailable(false);
-        return [];
-      }
-      if (error) throw error;
-      return (data ?? []) as PublicationJob[];
-    },
-  });
-
-  const publish = useMutation({
-    mutationFn: async (newspaper: Newspaper) => {
-      const { data: articles, error: articlesError } = await supabase
-        .from("articles")
+      const { data, error } = await supabase
+        .from("newspapers")
         .select("*")
-        .eq("newspaper_id", newspaper.id);
-      if (articlesError) throw articlesError;
-
-      await runPublicationPipeline({
-        newspaper,
-        articles: (articles ?? []) as unknown as Article[],
-        userId: user.id,
-      });
+        .eq("organization_id", organizationId!)
+        .eq("status", "published")
+        .order("updated_at", { ascending: false });
+      if (error) throw error;
+      return data as Newspaper[];
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["approved-queue", organizationId] });
-      qc.invalidateQueries({ queryKey: ["review-queue", organizationId] });
-      qc.invalidateQueries({ queryKey: ["publication-jobs", organizationId] });
-      qc.invalidateQueries({ queryKey: ["newspapers", organizationId] });
-      toast.success("Publication pipeline completed");
-    },
-    onError: (error: unknown) =>
-      toast.error(error instanceof Error ? error.message : "Could not publish edition"),
   });
 
   const updateSocialPost = useMutation({
@@ -644,7 +451,7 @@ function ReviewQueue() {
         <div>
           <h2 className="text-lg font-semibold">Approved Queue</h2>
           <p className="text-sm text-muted-foreground">
-            Approved editions waiting for Website, PDF, Print, Mobile, and Social Media generation.
+            Approved editions waiting for the chief editor to export the final print PDF.
           </p>
         </div>
         {approvedQueue.length === 0 ? (
@@ -653,52 +460,46 @@ function ReviewQueue() {
           </div>
         ) : (
           <div className="grid gap-3">
-            {approvedQueue.map((newspaper) => {
-              const job = getLatestJobForNewspaper(publicationJobs, newspaper.id);
-              const isPublishing = publish.isPending && publish.variables?.id === newspaper.id;
-              const isJobRunning = job?.status === "running" || job?.status === "queued";
+            {approvedQueue.map((newspaper) => (
+              <ApprovedEditionPdfCard
+                key={newspaper.id}
+                newspaper={newspaper}
+                canPublish={canPublish}
+                mode="publish"
+                onPublished={() => {
+                  qc.invalidateQueries({ queryKey: ["approved-queue", organizationId] });
+                  qc.invalidateQueries({ queryKey: ["exported-pdf-queue", organizationId] });
+                  qc.invalidateQueries({ queryKey: ["review-queue", organizationId] });
+                  qc.invalidateQueries({ queryKey: ["newspapers", organizationId] });
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </section>
 
-              return (
-                <div
-                  key={newspaper.id}
-                  className="space-y-3 rounded-lg border bg-card p-4"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <Link
-                      to="/review/$id"
-                      params={{ id: newspaper.id }}
-                      className="min-w-0 hover:underline"
-                    >
-                      <div className="font-serif text-lg font-semibold">
-                        {newspaper.edition_name}
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {format(new Date(newspaper.edition_date), "dd MMM yyyy")} -{" "}
-                        {newspaper.number_of_pages} pages
-                      </div>
-                    </Link>
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={newspaper.status} />
-                      {canPublish && (
-                        <Button
-                          size="sm"
-                          onClick={() => publish.mutate(newspaper)}
-                          disabled={isPublishing || isJobRunning}
-                        >
-                          {isPublishing || isJobRunning ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          ) : (
-                            <Rocket className="mr-2 h-4 w-4" />
-                          )}
-                          {isPublishing || isJobRunning ? "Publishing" : "Publish"}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                  <PipelineProgress job={job} />
-                </div>
-              );
-            })}
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">Exported PDFs</h2>
+          <p className="text-sm text-muted-foreground">
+            Published editions with final print PDFs ready to download.
+          </p>
+        </div>
+        {exportedPdfQueue.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+            No exported PDFs yet.
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {exportedPdfQueue.map((newspaper) => (
+              <ApprovedEditionPdfCard
+                key={newspaper.id}
+                newspaper={newspaper}
+                canPublish={canPublish}
+                mode="download"
+                onPublished={() => undefined}
+              />
+            ))}
           </div>
         )}
       </section>
@@ -706,32 +507,162 @@ function ReviewQueue() {
   );
 }
 
-function PipelineProgress({ job }: { job: PublicationJob | null }) {
-  const stages = job?.stages?.length ? job.stages : createQueuedStages();
+function ApprovedEditionPdfCard({
+  newspaper,
+  canPublish,
+  mode,
+  onPublished,
+}: {
+  newspaper: Newspaper;
+  canPublish: boolean;
+  mode: "publish" | "download";
+  onPublished: () => void;
+}) {
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isPrintActive, setIsPrintActive] = useState(false);
+
+  const { data: articles = [] } = useQuery({
+    queryKey: ["approved-pdf-articles", newspaper.id],
+    enabled: Boolean(newspaper.id),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("articles")
+        .select("*")
+        .eq("newspaper_id", newspaper.id);
+      if (error) throw error;
+      return (data ?? []) as unknown as Article[];
+    },
+  });
+
+  const { data: latestLayout } = useQuery({
+    queryKey: ["approved-pdf-layout", newspaper.id],
+    enabled: Boolean(newspaper.id),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("layouts")
+        .select("layout_json")
+        .eq("newspaper_id", newspaper.id)
+        .order("generated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.layout_json ?? null;
+    },
+  });
+
+  const savedPreviewPages = savedLayoutPageNumbers(latestLayout);
+  const hasSavedPreview = hasSavedEditorLayout(latestLayout);
+  const totalPages = hasSavedPreview
+    ? savedPreviewPages.length
+    : getPrintPageCount(articles, newspaper.number_of_pages);
+  const pages = hasSavedPreview
+    ? savedPreviewPages
+    : Array.from({ length: totalPages }, (_, index) => index + 1);
+
+  async function handlePdfAction() {
+    if (!previewRef.current) {
+      toast.error("PDF preview is still loading. Try again in a moment.");
+      return;
+    }
+
+    setIsPublishing(true);
+    const loadingToast = toast.loading(
+      mode === "publish" ? "Preparing print dialog..." : "Preparing print download...",
+    );
+
+    try {
+      if (mode === "publish") {
+        await persistPublishedEdition({
+          newspaper,
+          outputs: createPdfOutputUrls(newspaper),
+        });
+        onPublished();
+        toast.success("Edition published. Choose Save as PDF in the print dialog.", { id: loadingToast });
+      } else {
+        toast.success("Choose Save as PDF in the print dialog.", { id: loadingToast });
+      }
+      setIsPrintActive(true);
+      window.setTimeout(() => {
+        window.print();
+        window.setTimeout(() => setIsPrintActive(false), 500);
+      }, 100);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not open the print dialog.",
+        { id: loadingToast },
+      );
+      setIsPrintActive(false);
+    } finally {
+      setIsPublishing(false);
+    }
+  }
 
   return (
-    <div className="grid gap-2 md:grid-cols-5">
-      {stages.map((stage) => (
-        <div key={stage.key} className="rounded-md border bg-background/70 p-2">
-          <div className="flex items-center gap-2 text-xs font-semibold">
-            <StageIcon status={stage.status} />
-            {stage.label}
+    <div className="space-y-3 rounded-lg border bg-card p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link
+          to="/review/$id"
+          params={{ id: newspaper.id }}
+          className="min-w-0 hover:underline"
+        >
+          <div className="font-serif text-lg font-semibold">{newspaper.edition_name}</div>
+          <div className="text-sm text-muted-foreground">
+            {format(new Date(newspaper.edition_date), "dd MMM yyyy")} - {totalPages} pages
           </div>
-          <div className="mt-1 text-[11px] capitalize text-muted-foreground">{stage.status}</div>
+        </Link>
+        <div className="flex items-center gap-2">
+          <StatusBadge status={newspaper.status} />
+          {canPublish && (
+            <Button size="sm" onClick={handlePdfAction} disabled={isPublishing || pages.length === 0}>
+              {isPublishing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Printer className="mr-2 h-4 w-4" />
+              )}
+              {isPublishing
+                ? mode === "publish"
+                  ? "Opening Print"
+                  : "Opening Print"
+                : mode === "publish"
+                  ? "Publish & Print"
+                  : "Print / Save PDF"}
+            </Button>
+          )}
         </div>
-      ))}
-      {job?.status === "failed" && job.error_message && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive md:col-span-5">
-          {job.error_message}
-        </div>
-      )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {mode === "publish"
+          ? "This publishes the edition, then opens the browser print dialog for a sharper PDF."
+          : "This opens the browser print dialog so you can save a sharp PDF."}
+      </p>
+      <div
+        ref={previewRef}
+        id={isPrintActive ? "print-export-root" : undefined}
+        className="pdf-export-stage"
+        aria-hidden="true"
+      >
+        {pages.map((page) => (
+          <div key={page} data-page>
+            {hasSavedPreview ? (
+              <SavedLayoutPreviewPage
+                newspaper={newspaper}
+                articles={articles}
+                layoutJson={latestLayout}
+                pageNumber={page}
+                totalPages={totalPages}
+              />
+            ) : (
+              <NewspaperPage
+                newspaper={newspaper}
+                articles={articles}
+                pageNumber={page}
+                totalPages={totalPages}
+              />
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
-}
-
-function StageIcon({ status }: { status: PipelineStageStatus }) {
-  if (status === "completed") return <Check className="h-3.5 w-3.5 text-emerald-600" />;
-  if (status === "running") return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />;
-  if (status === "failed") return <XCircle className="h-3.5 w-3.5 text-destructive" />;
-  return <Clock3 className="h-3.5 w-3.5 text-muted-foreground" />;
 }

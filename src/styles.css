@@ -46,63 +46,63 @@
 
 :root {
   --radius: 0.5rem;
-  --background: oklch(0.985 0.003 90);
-  --foreground: oklch(0.18 0.02 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.02 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.02 260);
-  --primary: oklch(0.42 0.19 28); /* deep newsroom red */
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.95 0.005 90);
-  --secondary-foreground: oklch(0.22 0.02 260);
-  --muted: oklch(0.955 0.005 90);
-  --muted-foreground: oklch(0.5 0.02 260);
-  --accent: oklch(0.93 0.03 60);
-  --accent-foreground: oklch(0.22 0.02 260);
-  --destructive: oklch(0.52 0.22 28);
-  --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.9 0.008 90);
-  --input: oklch(0.92 0.008 90);
-  --ring: oklch(0.42 0.19 28);
+  --background: rgb(250 250 248);
+  --foreground: rgb(30 32 43);
+  --card: rgb(255 255 255);
+  --card-foreground: rgb(30 32 43);
+  --popover: rgb(255 255 255);
+  --popover-foreground: rgb(30 32 43);
+  --primary: rgb(156 42 38);
+  --primary-foreground: rgb(255 255 255);
+  --secondary: rgb(242 242 239);
+  --secondary-foreground: rgb(35 37 48);
+  --muted: rgb(242 242 239);
+  --muted-foreground: rgb(95 98 111);
+  --accent: rgb(244 235 209);
+  --accent-foreground: rgb(35 37 48);
+  --destructive: rgb(190 49 45);
+  --destructive-foreground: rgb(255 255 255);
+  --border: rgb(226 226 220);
+  --input: rgb(226 226 220);
+  --ring: rgb(156 42 38);
 
-  --newsprint: oklch(1 0 0);
-  --newsprint-ink: oklch(0.14 0.01 260);
-  --newsprint-rule: oklch(0.75 0.02 82);
+  --newsprint: rgb(255 255 255);
+  --newsprint-ink: rgb(22 23 27);
+  --newsprint-rule: rgb(188 179 156);
 
-  --sidebar: oklch(0.22 0.03 260);
-  --sidebar-foreground: oklch(0.96 0.005 90);
-  --sidebar-accent: oklch(0.3 0.04 260);
-  --sidebar-accent-foreground: oklch(0.98 0 0);
-  --sidebar-border: oklch(0.28 0.03 260);
+  --sidebar: rgb(32 38 53);
+  --sidebar-foreground: rgb(248 250 252);
+  --sidebar-accent: rgb(47 56 75);
+  --sidebar-accent-foreground: rgb(255 255 255);
+  --sidebar-border: rgb(57 65 83);
 }
 
 .dark {
-  --background: oklch(0.16 0.02 260);
-  --foreground: oklch(0.96 0.005 90);
-  --card: oklch(0.2 0.02 260);
-  --card-foreground: oklch(0.96 0.005 90);
-  --popover: oklch(0.2 0.02 260);
-  --popover-foreground: oklch(0.96 0.005 90);
-  --primary: oklch(0.6 0.19 28);
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.26 0.02 260);
-  --secondary-foreground: oklch(0.96 0.005 90);
-  --muted: oklch(0.24 0.02 260);
-  --muted-foreground: oklch(0.7 0.02 260);
-  --accent: oklch(0.3 0.04 260);
-  --accent-foreground: oklch(0.98 0 0);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.6 0.19 28);
-  --newsprint: oklch(1 0 0);
-  --newsprint-ink: oklch(0.14 0.01 260);
-  --newsprint-rule: oklch(0.75 0.02 82);
-  --sidebar: oklch(0.14 0.02 260);
-  --sidebar-foreground: oklch(0.96 0.005 90);
-  --sidebar-accent: oklch(0.22 0.03 260);
-  --sidebar-accent-foreground: oklch(0.98 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
+  --background: rgb(18 24 38);
+  --foreground: rgb(248 250 252);
+  --card: rgb(27 34 49);
+  --card-foreground: rgb(248 250 252);
+  --popover: rgb(27 34 49);
+  --popover-foreground: rgb(248 250 252);
+  --primary: rgb(232 77 66);
+  --primary-foreground: rgb(255 255 255);
+  --secondary: rgb(38 46 63);
+  --secondary-foreground: rgb(248 250 252);
+  --muted: rgb(34 42 58);
+  --muted-foreground: rgb(166 176 194);
+  --accent: rgb(47 56 75);
+  --accent-foreground: rgb(255 255 255);
+  --border: rgb(255 255 255 / 0.12);
+  --input: rgb(255 255 255 / 0.15);
+  --ring: rgb(232 77 66);
+  --newsprint: rgb(255 255 255);
+  --newsprint-ink: rgb(22 23 27);
+  --newsprint-rule: rgb(188 179 156);
+  --sidebar: rgb(12 18 30);
+  --sidebar-foreground: rgb(248 250 252);
+  --sidebar-accent: rgb(32 38 53);
+  --sidebar-accent-foreground: rgb(255 255 255);
+  --sidebar-border: rgb(255 255 255 / 0.08);
 }
 
 @layer base {
@@ -135,6 +135,107 @@
 }
 @utility column-rule {
   column-rule: 1px solid var(--color-newsprint-rule);
+}
+
+.pdf-export-stage {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 780px;
+  pointer-events: none;
+}
+
+.pdf-export-mode {
+  --background: rgb(250 250 248);
+  --foreground: rgb(30 32 43);
+  --card: rgb(255 255 255);
+  --card-foreground: rgb(30 32 43);
+  --popover: rgb(255 255 255);
+  --popover-foreground: rgb(30 32 43);
+  --primary: rgb(156 42 38);
+  --primary-foreground: rgb(255 255 255);
+  --secondary: rgb(242 242 239);
+  --secondary-foreground: rgb(35 37 48);
+  --muted: rgb(242 242 239);
+  --muted-foreground: rgb(95 98 111);
+  --accent: rgb(244 235 209);
+  --accent-foreground: rgb(35 37 48);
+  --destructive: rgb(190 49 45);
+  --destructive-foreground: rgb(255 255 255);
+  --border: rgb(226 226 220);
+  --input: rgb(226 226 220);
+  --ring: rgb(156 42 38);
+  --newsprint: rgb(255 255 255);
+  --newsprint-ink: rgb(22 23 27);
+  --newsprint-rule: rgb(188 179 156);
+  --sidebar: rgb(32 38 53);
+  --sidebar-foreground: rgb(248 250 252);
+  --sidebar-accent: rgb(47 56 75);
+  --sidebar-accent-foreground: rgb(255 255 255);
+  --sidebar-border: rgb(57 65 83);
+}
+
+@media print {
+  @page {
+    size: 780px 1084px;
+    margin: 0;
+  }
+
+  * {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  body {
+    background: white !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  #print-export-root,
+  #print-export-root * {
+    visibility: visible !important;
+  }
+
+  #print-export-root {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  #print-export-root > [data-page] {
+    break-after: page;
+    page-break-after: always;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  #print-export-root > [data-page]:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  [data-print-page] {
+    background-color: var(--newsprint) !important;
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  [data-print-page] * {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  [data-newspaper-article-block] {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
 }
 
 .landing-page-bg {

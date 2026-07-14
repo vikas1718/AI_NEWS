@@ -1,17 +1,11 @@
 import { createFileRoute, Link, redirect, useRouteContext } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useRef, type ReactNode } from "react";
+import { useRef, useState } from "react";
 import {
   ArrowLeft,
   Download,
-  Facebook,
-  FileText,
-  Globe2,
-  Instagram,
-  MessageCircle,
+  Loader2,
   Printer,
-  Smartphone,
-  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getPrintPageCount, NewspaperPage } from "@/components/NewspaperPage";
@@ -22,8 +16,8 @@ import {
 } from "@/components/SavedLayoutPreviewPage";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { supabaseUntyped } from "@/lib/supabase-untyped";
 import type { Article, Newspaper } from "@/lib/api";
+import { prepareHtml2CanvasPdfClone } from "@/lib/pdf-export";
 import { hasAnyPermission } from "@/lib/rbac";
 
 export const Route = createFileRoute("/_authenticated/published/$id")({
@@ -35,29 +29,12 @@ export const Route = createFileRoute("/_authenticated/published/$id")({
   component: PublishedView,
 });
 
-type PublicationRecord = {
-  id: string;
-  newspaper_id: string;
-  pipeline_job_id: string | null;
-  website_url: string | null;
-  pdf_url: string | null;
-  print_pdf_url: string | null;
-  print_ready_url: string | null;
-  epaper_url: string | null;
-  mobile_url: string | null;
-  audio_url: string | null;
-  social_media_kit_url: string | null;
-  instagram_card_url: string | null;
-  facebook_post_url: string | null;
-  whatsapp_share_url: string | null;
-  published_at: string;
-};
-
 function PublishedView() {
   const { id } = Route.useParams();
   const ctx = useRouteContext({ from: "/_authenticated" });
   const organizationId = ctx.organization?.id;
   const previewRef = useRef<HTMLDivElement>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   const { data: newspaper } = useQuery({
     queryKey: ["published-newspaper", id, organizationId],
@@ -84,20 +61,6 @@ function PublishedView() {
     },
   });
 
-  const { data: publication } = useQuery({
-    queryKey: ["publication", id, newspaper?.id],
-    enabled: Boolean(newspaper?.id),
-    queryFn: async () => {
-      const { data, error } = await supabaseUntyped
-        .from("publications")
-        .select("*")
-        .eq("newspaper_id", id)
-        .maybeSingle();
-      if (error) throw error;
-      return data as PublicationRecord | null;
-    },
-  });
-
   const { data: latestLayout } = useQuery({
     queryKey: ["published-saved-layout", id, newspaper?.id],
     enabled: Boolean(newspaper?.id),
@@ -114,30 +77,95 @@ function PublishedView() {
     },
   });
 
-  async function downloadPdf() {
-    if (!previewRef.current) return;
-    toast.info("Generating PDF...");
-    const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-      import("jspdf"),
-      import("html2canvas"),
-    ]);
-    const pages = previewRef.current.querySelectorAll("[data-print-page]");
-    if (pages.length === 0) {
-      toast.error("No preview pages found for PDF export");
+  function printWithBrowserPdf() {
+    if (!previewRef.current) {
+      toast.error("Preview is still loading. Try again in a moment.");
       return;
     }
-    const pdf = new jsPDF({ unit: "px", format: [780, 1084] });
-    for (let i = 0; i < pages.length; i++) {
-      const canvas = await html2canvas(pages[i] as HTMLElement, {
-        backgroundColor: "#ffffff",
-        scale: 2,
-        useCORS: true,
-      });
-      const img = canvas.toDataURL("image/png");
-      if (i > 0) pdf.addPage();
-      pdf.addImage(img, "PNG", 0, 0, 780, 1084);
+
+    toast.info("Print dialog opened. Choose Save as PDF to export.");
+    window.print();
+  }
+
+  async function waitForPreviewImages() {
+    if (!previewRef.current) return;
+    const images = Array.from(previewRef.current.querySelectorAll("img"));
+    await Promise.all(
+      images.map(
+        (image) =>
+          new Promise<void>((resolve) => {
+            if (image.complete) {
+              resolve();
+              return;
+            }
+            image.addEventListener("load", () => resolve(), { once: true });
+            image.addEventListener("error", () => resolve(), { once: true });
+          }),
+      ),
+    );
+  }
+
+  function pdfFileName() {
+    const base = `${newspaper?.edition_name ?? "newspaper"}-${newspaper?.edition_date ?? "edition"}`;
+    return `${base.replace(/[\\/:*?"<>|]+/g, "-")}.pdf`;
+  }
+
+  async function downloadPdf() {
+    if (!previewRef.current) {
+      toast.error("Preview is still loading. Try again in a moment.");
+      return;
     }
-    pdf.save(`${newspaper?.edition_name}-${newspaper?.edition_date}.pdf`);
+
+    setIsExportingPdf(true);
+    const loadingToast = toast.loading("Preparing print-ready PDF...");
+
+    try {
+      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+        import("jspdf"),
+        import("html2canvas"),
+      ]);
+
+      document.documentElement.classList.add("pdf-export-mode");
+      try {
+        await waitForPreviewImages();
+        const pages = previewRef.current.querySelectorAll("[data-print-page]");
+        if (pages.length === 0) {
+          throw new Error("No newspaper preview pages were found.");
+        }
+
+        const pdf = new jsPDF({ unit: "px", format: [780, 1084] });
+        for (let i = 0; i < pages.length; i++) {
+          toast.loading(`Exporting page ${i + 1} of ${pages.length}...`, { id: loadingToast });
+          const canvas = await html2canvas(pages[i] as HTMLElement, {
+            backgroundColor: "#ffffff",
+            scale: 2,
+            useCORS: true,
+            allowTaint: false,
+            logging: false,
+            onclone: (clonedDocument) => {
+              prepareHtml2CanvasPdfClone(clonedDocument, pages[i] as HTMLElement, i);
+            },
+          });
+          const img = canvas.toDataURL("image/png");
+          if (i > 0) pdf.addPage([780, 1084]);
+          pdf.addImage(img, "PNG", 0, 0, 780, 1084);
+        }
+        pdf.save(pdfFileName());
+      } finally {
+        document.documentElement.classList.remove("pdf-export-mode");
+      }
+      toast.success("Print-ready PDF downloaded.", { id: loadingToast });
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? `PDF download failed: ${error.message}. Opening print dialog instead.`
+          : "PDF download failed. Opening print dialog instead.",
+        { id: loadingToast },
+      );
+      window.setTimeout(() => window.print(), 300);
+    } finally {
+      setIsExportingPdf(false);
+    }
   }
 
   if (!newspaper) return <div>Loading...</div>;
@@ -149,10 +177,6 @@ function PublishedView() {
   const pages = hasSavedPreview
     ? savedPreviewPages
     : Array.from({ length: totalPages }, (_, i) => i + 1);
-  const topArticles = [...articles]
-    .sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0))
-    .slice(0, 3);
-
   return (
     <div className="space-y-8">
       <div>
@@ -172,107 +196,37 @@ function PublishedView() {
               {new Date(newspaper.edition_date).toDateString()}
             </p>
           </div>
-          <Button onClick={downloadPdf}>
-            <Download className="mr-2 h-4 w-4" /> Download Print PDF
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <OutputCard
-          icon={Globe2}
-          title="Website"
-          desc={publication?.website_url ?? publication?.epaper_url ?? "Published web edition"}
-          action={
-            <Button size="sm" variant="outline" asChild>
-              <a href={publication?.website_url ?? publication?.epaper_url ?? "#preview"}>Open</a>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={downloadPdf} disabled={isExportingPdf || pages.length === 0}>
+              {isExportingPdf ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              {isExportingPdf ? "Exporting PDF..." : "Download PDF"}
             </Button>
-          }
-        />
-        <OutputCard
-          icon={FileText}
-          title="PDF"
-          desc={publication?.pdf_url ?? publication?.print_pdf_url ?? "Edition PDF"}
-          action={
-            <Button size="sm" variant="outline" onClick={downloadPdf}>
-              Download
+            <Button variant="outline" onClick={printWithBrowserPdf}>
+              <Printer className="mr-2 h-4 w-4" />
+              Print / Save as PDF
             </Button>
-          }
-        />
-        <OutputCard
-          icon={Printer}
-          title="Print"
-          desc={publication?.print_ready_url ?? "Print-ready layout"}
-          action={
-            <Button size="sm" variant="outline" onClick={downloadPdf}>
-              Export
-            </Button>
-          }
-        />
-        <OutputCard
-          icon={Smartphone}
-          title="Mobile"
-          desc={publication?.mobile_url ?? "Mobile optimized edition"}
-          action={
-            <Button size="sm" variant="outline" asChild>
-              <a href={publication?.mobile_url ?? "#preview"}>Open</a>
-            </Button>
-          }
-        />
-        <OutputCard
-          icon={Instagram}
-          title="Social Media"
-          desc={publication?.social_media_kit_url ?? "Instagram, Facebook, WhatsApp"}
-          action={
-            <a href="#social" className="text-xs text-primary hover:underline">
-              Open kit
-            </a>
-          }
-        />
-      </div>
-
-      <div id="social" className="space-y-3">
-        <h2 className="text-lg font-semibold">Social Media Kit</h2>
-        <div className="grid gap-4 md:grid-cols-3">
-          {topArticles.slice(0, 3).map((article, index) => {
-            const Icon = [Instagram, Facebook, MessageCircle][index];
-            const platform = ["Instagram", "Facebook", "WhatsApp"][index];
-            return (
-              <div key={article.id} className="overflow-hidden rounded-lg border">
-                <div
-                  id={`social-${platform.toLowerCase()}`}
-                  className="bg-gradient-to-br from-primary to-primary/60 p-4 text-primary-foreground"
-                  style={{ aspectRatio: "1" }}
-                >
-                  <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider opacity-90">
-                    <Icon className="h-3 w-3" /> {platform}
-                  </div>
-                  <div className="mt-2 text-[10px] uppercase tracking-widest opacity-80">
-                    {newspaper.edition_name} - {article.category}
-                  </div>
-                  <h3 className="mt-2 font-kannada-serif text-2xl font-bold leading-tight">
-                    {article.headline}
-                  </h3>
-                  {article.image_url && (
-                    <img
-                      src={article.image_url}
-                      alt=""
-                      className="mt-3 h-32 w-full rounded object-cover"
-                    />
-                  )}
-                  <p className="mt-3 line-clamp-3 font-kannada text-sm opacity-90">
-                    {article.summary}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
+          </div>
         </div>
       </div>
 
       <div id="preview" className="space-y-6">
-        <h2 className="text-lg font-semibold">E-Paper</h2>
-        <div ref={previewRef} className="space-y-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Print Preview</h2>
+            <p className="text-sm text-muted-foreground">
+              This is the exact layout used for PDF export and browser printing.
+            </p>
+          </div>
+          <Button variant="outline" onClick={printWithBrowserPdf}>
+            <Printer className="mr-2 h-4 w-4" />
+            Print / Save as PDF
+          </Button>
+        </div>
+        <div id="print-export-root" ref={previewRef} className="space-y-6">
           {pages.map((page) => (
             <div key={page} data-page>
               {hasSavedPreview ? (
@@ -295,27 +249,6 @@ function PublishedView() {
           ))}
         </div>
       </div>
-    </div>
-  );
-}
-
-function OutputCard({
-  icon: Icon,
-  title,
-  desc,
-  action,
-}: {
-  icon: LucideIcon;
-  title: string;
-  desc: ReactNode;
-  action: ReactNode;
-}) {
-  return (
-    <div className="rounded-lg border bg-card p-4">
-      <Icon className="h-5 w-5 text-primary" />
-      <div className="mt-2 font-semibold">{title}</div>
-      <div className="break-words text-xs text-muted-foreground">{desc}</div>
-      <div className="mt-3">{action}</div>
     </div>
   );
 }

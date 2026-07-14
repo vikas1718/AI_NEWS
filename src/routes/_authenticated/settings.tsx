@@ -70,6 +70,7 @@ function SettingsPage() {
   const organization = ctx.organization;
   const membership = ctx.membership;
   const accountEmail = ctx.user.email ?? ctx.profile?.email ?? "";
+  const canLeaveOrganization = Boolean(organization && membership && membership.role !== "editor");
 
   useEffect(() => {
     setTheme(getStoredThemePreference());
@@ -144,6 +145,10 @@ function SettingsPage() {
 
   async function leaveOrganization() {
     if (!organization || !membership) return;
+    if (membership.role === "editor") {
+      toast.error("Editors cannot leave the organization. Ask a Chief Editor to remove access.");
+      return;
+    }
 
     setLeaving(true);
     try {
@@ -329,48 +334,50 @@ function SettingsPage() {
             )}
           </Card>
 
-          <Card className="rounded-lg border-destructive/30 p-6">
-            <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
-              <AlertTriangle className="h-4 w-4" />
-              Leave organization
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Leaving removes your active membership. You will lose access to organization editions,
-              review pages, team management, and organization settings.
-            </p>
+          {canLeaveOrganization && (
+            <Card className="rounded-lg border-destructive/30 p-6">
+              <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
+                <AlertTriangle className="h-4 w-4" />
+                Leave organization
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Leaving removes your active membership. You will lose access to organization editions,
+                review pages, team management, and organization settings.
+              </p>
 
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  disabled={!organization || !membership || leaving}
-                  className="mt-5 w-full"
-                >
-                  {leaving ? "Leaving..." : "Leave organization"}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Leave {organization?.name ?? "organization"}?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Your membership will be removed immediately. You can still sign in, but
-                    organization pages will be restricted until an owner gives this account access again.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={leaving}>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={leaveOrganization}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    disabled={leaving}
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={!organization || !membership || leaving}
+                    className="mt-5 w-full"
                   >
-                    Leave organization
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </Card>
+                    {leaving ? "Leaving..." : "Leave organization"}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Leave {organization?.name ?? "organization"}?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Your membership will be removed immediately. You can still sign in, but
+                      organization pages will be restricted until an owner gives this account access again.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={leaving}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={leaveOrganization}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      disabled={leaving}
+                    >
+                      Leave organization
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </Card>
+          )}
 
           <Card className="rounded-lg border-destructive/30 p-6">
             <div className="flex items-center gap-2 text-sm font-semibold text-destructive">
