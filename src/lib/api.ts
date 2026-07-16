@@ -174,6 +174,13 @@ export const aiFn = {
     callFn<{ layout: LayoutPlanItem[] }>("generate-layout", { articles, number_of_pages }),
   tts: (text: string, options: { mode?: "fast" | "full" } = {}) =>
     callFn<KannadaTtsResult>("tts-kannada", { text, mode: options.mode ?? "fast" }),
+
+  translate: (text: string, options: { targetLanguage: string; sourceLanguage?: string }) =>
+    callFn<{ translated_text: string }>("translate", {
+      text,
+      targetLanguage: options.targetLanguage,
+      sourceLanguage: options.sourceLanguage,
+    }),
 };
 
 export const scheduleFn = {

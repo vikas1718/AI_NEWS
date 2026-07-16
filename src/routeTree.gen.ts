@@ -12,13 +12,13 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthenticatedTextToSpeechRouteImport } from './routes/_authenticated/text-to-speech'
 import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as AuthenticatedOrganizationSettingsRouteImport } from './routes/_authenticated/organization-settings'
 import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedMultiplatformRouteImport } from './routes/_authenticated/multiplatform'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedContentPreviewRouteImport } from './routes/_authenticated/content-preview'
 import { Route as AuthenticatedAccessDeniedRouteImport } from './routes/_authenticated/access-denied'
 import { Route as AuthenticatedAboutRouteImport } from './routes/_authenticated/about'
 import { Route as AuthenticatedReviewIndexRouteImport } from './routes/_authenticated/review/index'
@@ -42,12 +42,6 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedTextToSpeechRoute =
-  AuthenticatedTextToSpeechRouteImport.update({
-    id: '/text-to-speech',
-    path: '/text-to-speech',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
 const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
   id: '/team',
   path: '/team',
@@ -80,6 +74,12 @@ const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedContentPreviewRoute =
+  AuthenticatedContentPreviewRouteImport.update({
+    id: '/content-preview',
+    path: '/content-preview',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedAccessDeniedRoute =
   AuthenticatedAccessDeniedRouteImport.update({
     id: '/access-denied',
@@ -131,13 +131,13 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/about': typeof AuthenticatedAboutRoute
   '/access-denied': typeof AuthenticatedAccessDeniedRoute
+  '/content-preview': typeof AuthenticatedContentPreviewRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/multiplatform': typeof AuthenticatedMultiplatformRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/team': typeof AuthenticatedTeamRoute
-  '/text-to-speech': typeof AuthenticatedTextToSpeechRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/multiplatform/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
@@ -150,13 +150,13 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/about': typeof AuthenticatedAboutRoute
   '/access-denied': typeof AuthenticatedAccessDeniedRoute
+  '/content-preview': typeof AuthenticatedContentPreviewRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/multiplatform': typeof AuthenticatedMultiplatformRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/team': typeof AuthenticatedTeamRoute
-  '/text-to-speech': typeof AuthenticatedTextToSpeechRoute
   '/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/multiplatform/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/published/$id': typeof AuthenticatedPublishedIdRoute
@@ -171,13 +171,13 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_authenticated/about': typeof AuthenticatedAboutRoute
   '/_authenticated/access-denied': typeof AuthenticatedAccessDeniedRoute
+  '/_authenticated/content-preview': typeof AuthenticatedContentPreviewRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/multiplatform': typeof AuthenticatedMultiplatformRoute
   '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
   '/_authenticated/organization-settings': typeof AuthenticatedOrganizationSettingsRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/team': typeof AuthenticatedTeamRoute
-  '/_authenticated/text-to-speech': typeof AuthenticatedTextToSpeechRoute
   '/_authenticated/editions/$id': typeof AuthenticatedEditionsIdRoute
   '/_authenticated/multiplatform_/instagram': typeof AuthenticatedMultiplatformInstagramRoute
   '/_authenticated/published/$id': typeof AuthenticatedPublishedIdRoute
@@ -192,13 +192,13 @@ export interface FileRouteTypes {
     | '/auth'
     | '/about'
     | '/access-denied'
+    | '/content-preview'
     | '/dashboard'
     | '/multiplatform'
     | '/onboarding'
     | '/organization-settings'
     | '/settings'
     | '/team'
-    | '/text-to-speech'
     | '/editions/$id'
     | '/multiplatform/instagram'
     | '/published/$id'
@@ -211,13 +211,13 @@ export interface FileRouteTypes {
     | '/auth'
     | '/about'
     | '/access-denied'
+    | '/content-preview'
     | '/dashboard'
     | '/multiplatform'
     | '/onboarding'
     | '/organization-settings'
     | '/settings'
     | '/team'
-    | '/text-to-speech'
     | '/editions/$id'
     | '/multiplatform/instagram'
     | '/published/$id'
@@ -231,13 +231,13 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_authenticated/about'
     | '/_authenticated/access-denied'
+    | '/_authenticated/content-preview'
     | '/_authenticated/dashboard'
     | '/_authenticated/multiplatform'
     | '/_authenticated/onboarding'
     | '/_authenticated/organization-settings'
     | '/_authenticated/settings'
     | '/_authenticated/team'
-    | '/_authenticated/text-to-speech'
     | '/_authenticated/editions/$id'
     | '/_authenticated/multiplatform_/instagram'
     | '/_authenticated/published/$id'
@@ -274,13 +274,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/_authenticated/text-to-speech': {
-      id: '/_authenticated/text-to-speech'
-      path: '/text-to-speech'
-      fullPath: '/text-to-speech'
-      preLoaderRoute: typeof AuthenticatedTextToSpeechRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/team': {
       id: '/_authenticated/team'
@@ -322,6 +315,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/content-preview': {
+      id: '/_authenticated/content-preview'
+      path: '/content-preview'
+      fullPath: '/content-preview'
+      preLoaderRoute: typeof AuthenticatedContentPreviewRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/access-denied': {
@@ -386,13 +386,13 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAboutRoute: typeof AuthenticatedAboutRoute
   AuthenticatedAccessDeniedRoute: typeof AuthenticatedAccessDeniedRoute
+  AuthenticatedContentPreviewRoute: typeof AuthenticatedContentPreviewRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedMultiplatformRoute: typeof AuthenticatedMultiplatformRoute
   AuthenticatedOnboardingRoute: typeof AuthenticatedOnboardingRoute
   AuthenticatedOrganizationSettingsRoute: typeof AuthenticatedOrganizationSettingsRoute
   AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
   AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
-  AuthenticatedTextToSpeechRoute: typeof AuthenticatedTextToSpeechRoute
   AuthenticatedEditionsIdRoute: typeof AuthenticatedEditionsIdRoute
   AuthenticatedMultiplatformInstagramRoute: typeof AuthenticatedMultiplatformInstagramRoute
   AuthenticatedPublishedIdRoute: typeof AuthenticatedPublishedIdRoute
@@ -404,6 +404,7 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAboutRoute: AuthenticatedAboutRoute,
   AuthenticatedAccessDeniedRoute: AuthenticatedAccessDeniedRoute,
+  AuthenticatedContentPreviewRoute: AuthenticatedContentPreviewRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedMultiplatformRoute: AuthenticatedMultiplatformRoute,
   AuthenticatedOnboardingRoute: AuthenticatedOnboardingRoute,
@@ -411,7 +412,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
     AuthenticatedOrganizationSettingsRoute,
   AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
   AuthenticatedTeamRoute: AuthenticatedTeamRoute,
-  AuthenticatedTextToSpeechRoute: AuthenticatedTextToSpeechRoute,
   AuthenticatedEditionsIdRoute: AuthenticatedEditionsIdRoute,
   AuthenticatedMultiplatformInstagramRoute:
     AuthenticatedMultiplatformInstagramRoute,

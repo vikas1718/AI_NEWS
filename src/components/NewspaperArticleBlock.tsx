@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { Languages } from "lucide-react";
 import type { Article } from "@/lib/api";
 
 export type NewspaperSlotKind = "lead" | "story" | "image" | "ad" | "sidebar" | string;
@@ -372,6 +373,69 @@ export function NewspaperArticleBlockContent({
             ))
           : null}
       </div>
+    </div>
+  );
+}
+
+type ArticleTranslateOverlayProps = {
+  articleId: string;
+  isActive: boolean;
+  onTap: (articleId: string) => void;
+  onTranslate: (articleId: string) => void;
+  children: ReactNode;
+  className?: string;
+};
+
+/**
+ * Wraps a rendered article block so it can be tapped/hovered in the content
+ * preview to reveal a "Translate" action, without affecting any other
+ * consumer of NewspaperPage / SavedLayoutPreviewPage (print export, review,
+ * published views) that doesn't pass these handlers in.
+ */
+export function ArticleTranslateOverlay({
+  articleId,
+  isActive,
+  onTap,
+  onTranslate,
+  children,
+  className,
+}: ArticleTranslateOverlayProps) {
+  return (
+    <div
+      className={`group/article relative h-full cursor-pointer ${className ?? ""}`}
+      role="button"
+      tabIndex={0}
+      onClick={(event) => {
+        event.stopPropagation();
+        onTap(articleId);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onTap(articleId);
+        }
+      }}
+    >
+      {children}
+      <div
+        aria-hidden
+        className={`pointer-events-none absolute inset-0 rounded-sm ring-2 ring-primary/70 transition-opacity duration-150 ${
+          isActive ? "opacity-100" : "opacity-0 group-hover/article:opacity-100"
+        }`}
+      />
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onTranslate(articleId);
+        }}
+        className={`absolute right-1 top-1 z-10 inline-flex items-center gap-1 rounded-full bg-primary px-2 py-1 text-[10px] font-semibold text-primary-foreground shadow-md transition-opacity duration-150 ${
+          isActive ? "opacity-100" : "pointer-events-none opacity-0 group-hover/article:pointer-events-auto group-hover/article:opacity-100"
+        }`}
+      >
+        <Languages className="h-3 w-3" />
+        Translate
+      </button>
     </div>
   );
 }

@@ -1,6 +1,9 @@
 import type { CSSProperties } from "react";
 import type { Article, Newspaper } from "@/lib/api";
-import { NewspaperArticleBlockContent } from "@/components/NewspaperArticleBlock";
+import {
+  ArticleTranslateOverlay,
+  NewspaperArticleBlockContent,
+} from "@/components/NewspaperArticleBlock";
 
 type SavedSlot = {
   id: string;
@@ -55,6 +58,9 @@ type Props = {
   layoutJson: unknown;
   pageNumber: number;
   totalPages: number;
+  activeArticleId?: string;
+  onArticleTap?: (articleId: string) => void;
+  onTranslateArticle?: (articleId: string) => void;
 };
 
 const PAGE_WIDTH = 780;
@@ -181,20 +187,40 @@ function ArticleBlock({
   article,
   slot,
   assignment,
+  activeArticleId,
+  onArticleTap,
+  onTranslateArticle,
 }: {
   article?: Article;
   slot: SavedSlot;
   assignment?: SavedAssignment;
+  activeArticleId?: string;
+  onArticleTap?: (articleId: string) => void;
+  onTranslateArticle?: (articleId: string) => void;
 }) {
   if (!article)
     return (
       <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground" />
     );
 
-  return (
+  const content = (
     <div className="h-full overflow-hidden bg-white">
       <NewspaperArticleBlockContent article={article} slot={slot} assignment={assignment} />
     </div>
+  );
+
+  if (!onArticleTap || !onTranslateArticle) return content;
+
+  return (
+    <ArticleTranslateOverlay
+      articleId={article.id}
+      isActive={activeArticleId === article.id}
+      onTap={onArticleTap}
+      onTranslate={onTranslateArticle}
+      className="h-full"
+    >
+      {content}
+    </ArticleTranslateOverlay>
   );
 }
 
@@ -214,7 +240,14 @@ function headerAdAssignment(pageState: SavedPageState) {
     : DEFAULT_HEADER_AD_ASSIGNMENT;
 }
 
-export function SavedLayoutPreviewPage({ articles, layoutJson, pageNumber }: Props) {
+export function SavedLayoutPreviewPage({
+  articles,
+  layoutJson,
+  pageNumber,
+  activeArticleId,
+  onArticleTap,
+  onTranslateArticle,
+}: Props) {
   const savedLayout = readSavedLayout(layoutJson);
   const pageState = savedLayout?.pages[String(pageNumber)];
   const articleById = new Map(articles.map((article) => [article.id, article]));
@@ -294,6 +327,9 @@ export function SavedLayoutPreviewPage({ articles, layoutJson, pageNumber }: Pro
                     }
                     slot={slot}
                     assignment={assignment}
+                    activeArticleId={activeArticleId}
+                    onArticleTap={onArticleTap}
+                    onTranslateArticle={onTranslateArticle}
                   />
                 )}
               </div>
