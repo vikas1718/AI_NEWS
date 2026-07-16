@@ -1404,6 +1404,69 @@ def handle_delete_scheduled_post(payload: dict[str, Any]) -> dict[str, Any]:
     return {"deleted": True, "id": post_id}
 
 
+TRANSLATE_LANGUAGE_NAMES = {
+    "kn": "Kannada",
+    "en": "English",
+    "hi": "Hindi",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "ml": "Malayalam",
+    "mr": "Marathi",
+}
+
+
+def translate_language_label(code: str | None) -> str:
+    normalized = (code or "").strip()
+    return TRANSLATE_LANGUAGE_NAMES.get(normalized.lower(), normalized or "the target language")
+
+
+def handle_translate(payload: dict[str, Any]) -> dict[str, Any]:
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise ValueError("text required")
+
+    target_language = str(payload.get("targetLanguage") or "").strip()
+    if not target_language:
+        raise ValueError("targetLanguage required")
+
+    source_language = str(payload.get("sourceLanguage") or "").strip() or None
+    target_label = translate_language_label(target_language)
+    source_label = translate_language_label(source_language) if source_language else "the source language (auto-detect)"
+
+    system_prompt = (
+        "You are a professional newspaper translator. Translate the user's article text from "
+        f"{source_label} into natural, publication-ready {target_label}. Preserve meaning, tone, "
+        "paragraph breaks, and named entities. Do not summarize, add commentary, or wrap the "
+        'output in quotes. Respond ONLY with a JSON object: {"translated_text": "..."}.'
+    )
+
+    try:
+        result = call_openai_chat(text, system_prompt)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            raise RuntimeError("rate_limited") from exc
+        if exc.code == 402:
+            raise RuntimeError("credits_exhausted") from exc
+        raise RuntimeError(f"ai_failed: {exc.read().decode('utf-8', errors='replace')}") from exc
+    except (OSError, urllib.error.URLError) as exc:
+        raise RuntimeError(ai_connection_error_message(exc)) from exc
+
+    if result is None:
+        raise RuntimeError(
+            "ai_failed: Translation needs OPENAI_API_KEY. Please configure the backend and try again."
+        )
+
+    translated_text = str(result.get("translated_text") or "").strip()
+    if not translated_text:
+        raise RuntimeError("translation_failed: AI returned an empty translation. Please try again.")
+
+    return {
+        "translated_text": translated_text,
+        "sourceLanguage": source_language,
+        "targetLanguage": target_language,
+    }
+
+
 HANDLERS = {
     "process-ocr": handle_process_ocr,
     "process-article-ai": handle_process_article,
@@ -1417,6 +1480,7 @@ HANDLERS = {
     "cancel-scheduled-post": handle_cancel_scheduled_post,
     "delete-scheduled-post": handle_delete_scheduled_post,
     "tts-kannada": handle_tts,
+    "translate": handle_translate,
 }
 
 
@@ -1472,7 +1536,7 @@ def main() -> None:
     port = int(os.environ.get("PY_BACKEND_PORT", "8000"))
     server = ThreadingHTTPServer(("127.0.0.1", port), BackendHandler)
     print(f"Python backend running at http://127.0.0.1:{port}")
-    print("Endpoints are available at /functions/v1/{process-ocr,process-article-ai,generate-image,generate-layout,generate-instagram-content,edit-social-content,list-scheduled-posts,schedule-post,update-scheduled-post,cancel-scheduled-post,delete-scheduled-post,tts-kannada}")
+    print("Endpoints are available at /functions/v1/{process-ocr,process-article-ai,generate-image,generate-layout,generate-instagram-content,edit-social-content,list-scheduled-posts,schedule-post,update-scheduled-post,cancel-scheduled-post,delete-scheduled-post,tts-kannada,translate}")
     server.serve_forever()
 
 

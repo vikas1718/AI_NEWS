@@ -1,12 +1,18 @@
 import type { CSSProperties } from "react";
 import type { Article, Newspaper } from "@/lib/api";
-import { newspaperArticleBackgroundStyle } from "@/components/NewspaperArticleBlock";
+import {
+  ArticleTranslateOverlay,
+  newspaperArticleBackgroundStyle,
+} from "@/components/NewspaperArticleBlock";
 
 interface Props {
   newspaper: Newspaper;
   articles: Article[];
   pageNumber: number;
   totalPages?: number;
+  activeArticleId?: string;
+  onArticleTap?: (articleId: string) => void;
+  onTranslateArticle?: (articleId: string) => void;
 }
 
 type PrintArticle = Article & {
@@ -153,12 +159,21 @@ function articleText(article: PrintArticle) {
   );
 }
 
-export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: Props) {
+export function NewspaperPage({
+  newspaper,
+  articles,
+  pageNumber,
+  totalPages,
+  activeArticleId,
+  onArticleTap,
+  onTranslateArticle,
+}: Props) {
   const pageArticles = paginatePrintArticles(articles).get(pageNumber) ?? [];
   const lead = pageArticles.find((a) => a.headline_size === "big") ?? pageArticles[0];
   const rest = pageArticles.filter((a) => a.id !== lead?.id);
   const leadText = lead ? articleText(lead) : "";
   const displayTotalPages = totalPages ?? newspaper.number_of_pages;
+  const interactive = Boolean(onArticleTap && onTranslateArticle);
 
   return (
     <div className="w-full overflow-x-auto pb-2">
@@ -198,41 +213,60 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
         )}
 
         {lead && (
-          <div className="mb-3 shrink-0 pb-2" style={articleBackgroundStyle(lead)}>
-            <div className="text-[10px] font-bold uppercase tracking-widest text-primary">
-              {lead.continued ? "Continued" : lead.category}
-            </div>
-            <h1 className="mt-1 font-kannada-serif text-3xl font-black leading-tight">
-              {lead.headline}
-            </h1>
-            {lead.summary && (
-              <p className="mt-1.5 font-kannada text-xs italic leading-snug opacity-80">
-                {lead.summary}
-              </p>
-            )}
-            <div className="mt-2 grid grid-cols-3 gap-3">
-              {lead.image_url && (
-                <div className="col-span-3">
-                  <img src={lead.image_url} alt="" className="h-36 w-full object-cover" />
-                  <div className="text-[9px] italic opacity-70">Photo caption</div>
+          <div className="mb-3 shrink-0 pb-2">
+            {(() => {
+              const leadCard = (
+                <div style={articleBackgroundStyle(lead)}>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-primary">
+                    {lead.continued ? "Continued" : lead.category}
+                  </div>
+                  <h1 className="mt-1 font-kannada-serif text-3xl font-black leading-tight">
+                    {lead.headline}
+                  </h1>
+                  {lead.summary && (
+                    <p className="mt-1.5 font-kannada text-xs italic leading-snug opacity-80">
+                      {lead.summary}
+                    </p>
+                  )}
+                  <div className="mt-2 grid grid-cols-3 gap-3">
+                    {lead.image_url && (
+                      <div className="col-span-3">
+                        <img src={lead.image_url} alt="" className="h-36 w-full object-cover" />
+                        <div className="text-[9px] italic opacity-70">Photo caption</div>
+                      </div>
+                    )}
+                    <div
+                      className={`col-span-3 font-kannada ${bodyTextClass(leadText, true)}`}
+                      style={{ columnCount: 3, columnGap: 12 }}
+                    >
+                      {leadText}
+                    </div>
+                  </div>
                 </div>
-              )}
-              <div
-                className={`col-span-3 font-kannada ${bodyTextClass(leadText, true)}`}
-                style={{ columnCount: 3, columnGap: 12 }}
-              >
-                {leadText}
-              </div>
-            </div>
+              );
+
+              if (!interactive) return leadCard;
+
+              const originalId = lead.print_id ?? lead.id;
+              return (
+                <ArticleTranslateOverlay
+                  articleId={originalId}
+                  isActive={activeArticleId === originalId}
+                  onTap={onArticleTap!}
+                  onTranslate={onTranslateArticle!}
+                >
+                  {leadCard}
+                </ArticleTranslateOverlay>
+              );
+            })()}
           </div>
         )}
 
         <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-hidden">
           {rest.map((article) => {
             const text = articleText(article);
-            return (
+            const card = (
               <div
-                key={article.id}
                 className="min-h-0 overflow-hidden pt-2"
                 style={articleBackgroundStyle(article)}
               >
@@ -256,6 +290,29 @@ export function NewspaperPage({ newspaper, articles, pageNumber, totalPages }: P
                 >
                   {text}
                 </p>
+              </div>
+            );
+
+            if (!interactive) {
+              return (
+                <div key={article.id} className="min-h-0 overflow-hidden">
+                  {card}
+                </div>
+              );
+            }
+
+            const originalId = article.print_id ?? article.id;
+            return (
+              <div key={article.id} className="min-h-0 overflow-hidden">
+                <ArticleTranslateOverlay
+                  articleId={originalId}
+                  isActive={activeArticleId === originalId}
+                  onTap={onArticleTap!}
+                  onTranslate={onTranslateArticle!}
+                  className="h-full"
+                >
+                  {card}
+                </ArticleTranslateOverlay>
               </div>
             );
           })}

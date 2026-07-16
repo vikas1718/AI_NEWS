@@ -1,5 +1,6 @@
 import { Link, useNavigate, useRouteContext, useRouterState } from "@tanstack/react-router";
 import {
+  BookOpenText,
   FileCheck2,
   LayoutDashboard,
   LogOut,
@@ -9,7 +10,6 @@ import {
   PanelLeftOpen,
   Settings,
   Share2,
-  Volume2,
   Users,
   X,
 } from "lucide-react";
@@ -28,7 +28,8 @@ type NavRoute =
   | "/settings"
   | "/organization-settings"
   | "/multiplatform/instagram"
-  | "/text-to-speech";
+  | "/content-preview";
+
 
 export function AppShell({ children }: { children: ReactNode }) {
   const ctx = useRouteContext({ from: "/_authenticated" });
@@ -48,7 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, show: true },
     { to: "/editions", label: role === "editor" ? "My Editions" : "Editions", icon: Newspaper, show: true },
     { to: "/multiplatform/instagram", label: "Multiplatform", icon: Share2, show: true },
-    { to: "/text-to-speech", label: "Text-to-Speech", icon: Volume2, show: true },
+    { to: "/content-preview", label: "Content Preview", icon: BookOpenText, show: true },
     { to: "/review", label: "Review Queue", icon: FileCheck2, show: role === "chief_editor" },
     { to: "/team", label: "Organization", icon: Users, show: true },
     { to: "/settings", label: "Settings", icon: Settings, show: true },
